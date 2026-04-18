@@ -9,7 +9,7 @@ pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
 
 W, H = 1280, 720
 screen = pygame.display.set_mode((W, H))
-pygame.display.set_caption("Vampire Survivors Like")
+pygame.display.set_caption("Vampire Survivors Like  [3D ISO]")
 clock = pygame.time.Clock()
 
 WHITE  = (255, 255, 255)
@@ -25,6 +25,71 @@ ORANGE = (255, 140, 0)
 CYAN   = (0,   200, 220)
 GOLD   = (255, 200, 0)
 LIME   = (130, 255, 50)
+
+# ─────────────────────────────────────────────
+# Terrain system
+# ─────────────────────────────────────────────
+TERRAIN_GRASS    = 0
+TERRAIN_MAGMA    = 1
+TERRAIN_ICE      = 2
+TERRAIN_SWAMP    = 3
+TERRAIN_VALLEY   = 4
+TERRAIN_MOUNTAIN = 5
+
+TILE_STEP    = 80
+ZONE_SIZE    = 5   # tiles per zone side
+TERRAIN_WEIGHTS = [48, 10, 12, 10, 3, 17]
+
+TERRAIN_COLS = {
+    TERRAIN_GRASS:    [(28, 75, 28),   (22, 60, 22)],
+    TERRAIN_MAGMA:    [(170, 45,  0),  (210, 70,  5)],
+    TERRAIN_ICE:      [(105,175,225),  (130,200,250)],
+    TERRAIN_SWAMP:    [(62,  46, 28),  (50,  36, 20)],
+    TERRAIN_VALLEY:   [(14,  11, 20),  ( 9,   7, 14)],
+    TERRAIN_MOUNTAIN: [(72,  66, 56),  (92,  86, 72)],
+}
+
+TERRAIN_LABELS = {
+    TERRAIN_GRASS:    "Grassland",
+    TERRAIN_MAGMA:    "MAGMA  -HP / Enemy spawn!",
+    TERRAIN_ICE:      "Ice  Slippery!",
+    TERRAIN_SWAMP:    "Swamp  Slowed",
+    TERRAIN_VALLEY:   "Valley  FALLING...",
+    TERRAIN_MOUNTAIN: "Mountain  Blocked",
+}
+
+TERRAIN_HUD_COLS = {
+    TERRAIN_GRASS:    (80, 200, 80),
+    TERRAIN_MAGMA:    (255, 100, 0),
+    TERRAIN_ICE:      (150, 210, 255),
+    TERRAIN_SWAMP:    (80, 160, 60),
+    TERRAIN_VALLEY:   (160, 90, 255),
+    TERRAIN_MOUNTAIN: (180, 160, 130),
+}
+
+class TerrainMap:
+    def __init__(self, seed=None):
+        self._cache = {}
+        self._seed  = seed if seed is not None else random.randint(0, 999999)
+
+    def _zone_type(self, zx, zy):
+        key = (zx, zy)
+        if key not in self._cache:
+            if abs(zx)<=1 and abs(zy)<=1:   # starting area is always grass
+                self._cache[key] = TERRAIN_GRASS
+            else:
+                rng = random.Random(self._seed ^ (zx * 73856093 & 0x7FFFFFFF) ^ (zy * 19349663 & 0x7FFFFFFF))
+                self._cache[key] = rng.choices(range(6), weights=TERRAIN_WEIGHTS)[0]
+        return self._cache[key]
+
+    def get(self, gx, gy):
+        return self._zone_type(gx // ZONE_SIZE, gy // ZONE_SIZE)
+
+    def world_to_tile(self, wx, wy):
+        return int(math.floor(wx / TILE_STEP)), int(math.floor(wy / TILE_STEP))
+
+    def at(self, wx, wy):
+        return self.get(*self.world_to_tile(wx, wy))
 
 # Underground UI palette
 UI_BG    = (10,  8,  18)    # panel background
@@ -48,6 +113,29 @@ def dist(a, b):
 def norm(dx, dy):
     d = math.hypot(dx, dy)
     return (dx/d, dy/d) if d else (0.0, 0.0)
+
+
+# ─────────────────────────────────────────────
+# Isometric 3D projection helpers
+# ─────────────────────────────────────────────
+ISO_SX = 0.65    # horizontal spread per world unit
+ISO_SY = 0.325   # vertical compression per world unit (2:1 classic iso)
+
+def iso_pos(wx, wy, wz, ox, oy):
+    """World (wx,wy,wz) → screen (sx,sy) via isometric projection."""
+    dx, dy = wx - ox, wy - oy
+    sx = int((dx - dy) * ISO_SX + W / 2)
+    sy = int((dx + dy) * ISO_SY + H / 2 - wz)
+    return sx, sy
+
+def draw_shadow(surf, wx, wy, ox, oy, r, alpha=60):
+    """Draw an elliptical ground shadow at world position (wx,wy)."""
+    sx, sy = iso_pos(wx, wy, 0, ox, oy)
+    sw = max(4, int(r * 1.6))
+    sh = max(2, int(r * 0.55))
+    ss = pygame.Surface((sw, sh), pygame.SRCALPHA)
+    pygame.draw.ellipse(ss, (0, 0, 0, alpha), (0, 0, sw, sh))
+    surf.blit(ss, (sx - sw // 2, sy - sh // 2))
 
 
 # ─────────────────────────────────────────────
@@ -138,33 +226,291 @@ def _draw_rogue(size=64):
     s.blit(gs,(cx-11,10))
     return s
 
-def _draw_enemy_normal(size=36):
+def _draw_coronavirus(size, body_col, spike_col, tip_col, outline_col, n_spikes, spike_len, tip_r):
     s = pygame.Surface((size, size), pygame.SRCALPHA)
-    cx = size // 2
-    pygame.draw.ellipse(s,(0,0,0,50),(cx-12,size-8,24,7))
-    pygame.draw.circle(s,(185,42,42),(cx,cx-2),14)
-    pygame.draw.polygon(s,(142,25,25),[(cx-10,11),(cx-15,2),(cx-6,9)])
-    pygame.draw.polygon(s,(142,25,25),[(cx+10,11),(cx+15,2),(cx+6,9)])
-    pygame.draw.circle(s,YELLOW,(cx-5,cx-4),4)
-    pygame.draw.circle(s,YELLOW,(cx+5,cx-4),4)
-    pygame.draw.circle(s,(18,8,8),(cx-5,cx-4),2)
-    pygame.draw.circle(s,(18,8,8),(cx+5,cx-4),2)
-    pygame.draw.arc(s,(18,8,8),(cx-6,cx-1,12,8),math.pi,0,2)
-    pygame.draw.circle(s,(142,25,25),(cx,cx-2),14,2)
+    cx = cy = size // 2
+    r = size // 2 - spike_len - 1
+    pygame.draw.ellipse(s,(0,0,0,50),(cx-r,size-5,r*2,5))
+    for i in range(n_spikes):
+        a = i * math.pi * 2 / n_spikes
+        sx = cx + math.cos(a)*(r-1); sy = cy + math.sin(a)*(r-1)
+        tx = cx + math.cos(a)*(r+spike_len); ty = cy + math.sin(a)*(r+spike_len)
+        pygame.draw.line(s, spike_col, (int(sx),int(sy)), (int(tx),int(ty)), 2)
+        pygame.draw.circle(s, tip_col, (int(tx),int(ty)), tip_r)
+    pygame.draw.circle(s, body_col, (cx,cy), r)
+    hi=(min(body_col[0]+40,255),min(body_col[1]+40,255),min(body_col[2]+40,255))
+    pygame.draw.circle(s, hi, (cx-r//3,cy-r//3), r//2)
+    pygame.draw.circle(s, outline_col, (cx,cy), r, 2)
     return s
 
-def _draw_enemy_fast(size=28):
-    s = pygame.Surface((size, size), pygame.SRCALPHA)
-    cx = size // 2
-    pygame.draw.ellipse(s,(0,0,0,50),(cx-9,size-7,18,6))
-    pygame.draw.circle(s,(235,72,72),(cx,cx-1),10)
-    pygame.draw.polygon(s,(200,40,40),[(cx-7,9),(cx-10,2),(cx-4,7)])
-    pygame.draw.polygon(s,(200,40,40),[(cx+7,9),(cx+10,2),(cx+4,7)])
-    pygame.draw.circle(s,YELLOW,(cx-3,cx-3),3)
-    pygame.draw.circle(s,YELLOW,(cx+3,cx-3),3)
-    pygame.draw.circle(s,(15,6,6),(cx-3,cx-3),1)
-    pygame.draw.circle(s,(15,6,6),(cx+3,cx-3),1)
-    pygame.draw.circle(s,(200,40,40),(cx,cx-1),10,2)
+def _draw_enemy_normal(size=40):
+    return _draw_coronavirus(size,
+        body_col=(195,185,215), spike_col=(200,55,75), tip_col=(240,110,120),
+        outline_col=(150,110,175), n_spikes=12, spike_len=9, tip_r=3)
+
+def _draw_enemy_fast(size=32):
+    return _draw_coronavirus(size,
+        body_col=(225,75,95), spike_col=(170,25,45), tip_col=(255,130,140),
+        outline_col=(150,35,55), n_spikes=9, spike_len=7, tip_r=2)
+
+def _draw_virus_influenza(size=40):
+    s=pygame.Surface((size,size),pygame.SRCALPHA)
+    cx=cy=size//2; r=size//2-11
+    pygame.draw.ellipse(s,(0,0,0,50),(cx-r,size-5,r*2,5))
+    for i in range(10):
+        a=i*math.pi*2/10
+        sx2=cx+math.cos(a)*(r-1); sy2=cy+math.sin(a)*(r-1)
+        tx=cx+math.cos(a)*(r+8); ty=cy+math.sin(a)*(r+8)
+        pygame.draw.line(s,(160,80,180),(int(sx2),int(sy2)),(int(tx),int(ty)),2)
+        # Mushroom-cap hemagglutinin tip
+        lx=int(tx-math.cos(a+math.pi/2)*3); ly=int(ty-math.sin(a+math.pi/2)*3)
+        rx=int(tx+math.cos(a+math.pi/2)*3); ry=int(ty+math.sin(a+math.pi/2)*3)
+        pygame.draw.line(s,(210,130,230),(lx,ly),(rx,ry),3)
+    pygame.draw.circle(s,(215,200,75),(cx,cy),r)
+    pygame.draw.circle(s,(240,230,130),(cx-r//3,cy-r//3),r//2)
+    pygame.draw.circle(s,(175,155,35),(cx,cy),r,2)
+    return s
+
+def _draw_virus_hiv(size=40):
+    s=pygame.Surface((size,size),pygame.SRCALPHA)
+    cx=cy=size//2; r=size//2-10
+    pygame.draw.ellipse(s,(0,0,0,50),(cx-r,size-5,r*2,5))
+    for i in range(7):
+        a=i*math.pi*2/7
+        sx2=cx+math.cos(a)*(r-1); sy2=cy+math.sin(a)*(r-1)
+        tx=cx+math.cos(a)*(r+9); ty=cy+math.sin(a)*(r+9)
+        pygame.draw.line(s,(110,55,160),(int(sx2),int(sy2)),(int(tx),int(ty)),2)
+        for da in (-0.35,0,0.35):
+            ex=int(tx+math.cos(a+da)*3); ey=int(ty+math.sin(a+da)*3)
+            pygame.draw.circle(s,(160,90,210),(ex,ey),2)
+    pygame.draw.circle(s,(175,55,80),(cx,cy),r)
+    # Visible conical core
+    pygame.draw.polygon(s,(110,25,50),[(cx,cy-r//2),(cx-r//3,cy+r//3),(cx+r//3,cy+r//3)])
+    pygame.draw.circle(s,(205,95,110),(cx-2,cy-2),r//3)
+    pygame.draw.circle(s,(130,30,55),(cx,cy),r,2)
+    return s
+
+def _draw_virus_ebola(size=52):
+    s=pygame.Surface((size,size),pygame.SRCALPHA)
+    pts=[]
+    for i in range(24):
+        t=i/23
+        x=int(6+t*(size-12))
+        y=int(size//2+math.sin(t*math.pi*1.8)*13)
+        pts.append((x,y))
+    if len(pts)>=2:
+        pygame.draw.lines(s,(40,110,40),False,pts,10)
+        pygame.draw.lines(s,(70,165,70),False,pts,7)
+        pygame.draw.lines(s,(100,210,100),False,pts,3)
+    pygame.draw.circle(s,(70,165,70),(pts[0][0],pts[0][1]),5)
+    pygame.draw.circle(s,(70,165,70),(pts[-1][0],pts[-1][1]),5)
+    for i in range(0,len(pts),3):
+        pygame.draw.circle(s,(40,100,40),(pts[i][0],pts[i][1]),2)
+    return s
+
+def _draw_virus_rabies(size=44):
+    s=pygame.Surface((size,size),pygame.SRCALPHA)
+    cx=size//2; bw=18; bh=30; bx=cx-bw//2; by=size//2-bh//2
+    pygame.draw.ellipse(s,(0,0,0,50),(bx,by+bh+2,bw,5))
+    pygame.draw.rect(s,(140,140,195),(bx,by+bh//3,bw,bh*2//3))
+    pygame.draw.ellipse(s,(140,140,195),(bx,by,bw,bh//2))
+    for i in range(7):
+        a=i*math.pi/(6); r2=bw//2+1
+        sx2=int(cx+math.cos(a)*r2); sy2=int(by+bh//3+math.sin(a)*(bh//3))
+        tx=int(cx+math.cos(a)*(r2+6)); ty=int(sy2+math.sin(a)*5)
+        if 0<=tx<size and 0<=ty<size:
+            pygame.draw.line(s,(95,95,175),(sx2,sy2),(tx,ty),2)
+            pygame.draw.circle(s,(155,155,220),(tx,ty),2)
+    pygame.draw.rect(s,(100,100,160),(bx,by+bh//3,bw,bh*2//3),2)
+    pygame.draw.ellipse(s,(100,100,160),(bx,by,bw,bh//2),2)
+    pygame.draw.ellipse(s,(190,190,230),(bx+3,by+4,bw//3,bh//5))
+    return s
+
+def _draw_virus_plague(size=40):
+    s=pygame.Surface((size,size),pygame.SRCALPHA)
+    rng=random.Random(7331)
+    cx=size//2; bw=10; bh=26; bx=cx-bw//2; by=size//2-bh//2
+    pygame.draw.ellipse(s,(0,0,0,50),(bx,by+bh+2,bw,5))
+    pygame.draw.rect(s,(175,115,55),(bx,by+5,bw,bh-10))
+    pygame.draw.ellipse(s,(175,115,55),(bx,by,bw,10))
+    pygame.draw.ellipse(s,(175,115,55),(bx,by+bh-10,bw,10))
+    for fidx in range(4):
+        fx=cx; fy=by+bh//2+fidx*2-3
+        px2,py2=fx,fy
+        for j in range(9):
+            nx=int(fx+j*5+rng.randint(-4,4)); ny=int(fy+j*3+rng.randint(-3,3))
+            pygame.draw.line(s,(130,70,25),(px2,py2),(nx,ny),1)
+            px2,py2=nx,ny
+    pygame.draw.rect(s,(130,70,25),(bx,by+5,bw,bh-10),2)
+    pygame.draw.ellipse(s,(130,70,25),(bx,by,bw,10),2)
+    pygame.draw.ellipse(s,(130,70,25),(bx,by+bh-10,bw,10),2)
+    pygame.draw.ellipse(s,(210,162,100),(bx+2,by+7,bw//3,bh//4))
+    return s
+
+def _draw_virus_phage(size=72):
+    s=pygame.Surface((size,size),pygame.SRCALPHA)
+    cx=size//2
+    lc=(60,85,120); fc=(185,205,230); dc=(100,125,160)
+    # === Icosahedral head (flat-top hexagon + triangulation) ===
+    hr=17; hcy=5+hr
+    hpts=[(int(cx+math.cos(i*math.pi/3)*hr),
+           int(hcy+math.sin(i*math.pi/3)*hr)) for i in range(6)]
+    pygame.draw.polygon(s,fc,hpts)
+    # Facet lines from center to each vertex + between vertices
+    for i in range(6):
+        pygame.draw.line(s,dc,(cx,hcy),(hpts[i][0],hpts[i][1]),1)
+        pygame.draw.line(s,dc,hpts[i],hpts[(i+1)%6],1)
+    # Inner mid-band (connects mid-edge left-right)
+    pygame.draw.line(s,dc,
+        ((hpts[3][0]+hpts[4][0])//2,(hpts[3][1]+hpts[4][1])//2),
+        ((hpts[0][0]+hpts[1][0])//2,(hpts[0][1]+hpts[1][1])//2),1)
+    pygame.draw.polygon(s,lc,hpts,2)
+    head_bot=hcy+hr
+    # === Collar ===
+    pygame.draw.rect(s,dc,(cx-11,head_bot,22,5))
+    pygame.draw.rect(s,lc,(cx-11,head_bot,22,5),1)
+    # === Helical tail sheath (spring coil look) ===
+    tail_top=head_bot+5; tail_h=24; tw=9
+    pygame.draw.line(s,lc,(cx-tw,tail_top),(cx-tw,tail_top+tail_h),1)
+    pygame.draw.line(s,lc,(cx+tw,tail_top),(cx+tw,tail_top+tail_h),1)
+    n_rings=8
+    for i in range(n_rings):
+        ry=tail_top+i*tail_h//n_rings
+        rh=4
+        pygame.draw.ellipse(s,fc,(cx-tw,ry,tw*2,rh))
+        pygame.draw.ellipse(s,dc,(cx-tw,ry,tw*2,rh),1)
+    # === Base plate (hexagonal) ===
+    bp_y=tail_top+tail_h; bpr=13
+    bppts=[(int(cx+math.cos(i*math.pi/3)*bpr),
+            int(bp_y+3+math.sin(i*math.pi/3)*5)) for i in range(6)]
+    pygame.draw.polygon(s,dc,bppts)
+    pygame.draw.polygon(s,lc,bppts,1)
+    bp_cy=bp_y+3
+    # === Tail fibers — 6 long bent legs ===
+    for i in range(6):
+        a=i*math.pi/3
+        # Root at base plate edge
+        rx=int(cx+math.cos(a)*bpr*0.7); ry2=bp_cy+int(math.sin(a)*3)
+        # First segment: outward
+        kx=int(rx+math.cos(a)*14); ky=int(ry2+8)
+        # Second segment: downward
+        fx2=int(kx+math.cos(a)*5); fy2=int(ky+12)
+        pygame.draw.line(s,lc,(rx,ry2),(kx,ky),1)
+        pygame.draw.line(s,lc,(kx,ky),(fx2,fy2),1)
+        # Foot pin
+        pygame.draw.circle(s,dc,(fx2,fy2),2)
+        pygame.draw.line(s,lc,(fx2,fy2),(fx2,fy2+4),1)
+    return s
+
+def _draw_virus_smallpox(size=44):
+    s=pygame.Surface((size,size),pygame.SRCALPHA)
+    cx=cy=size//2; w=30; h=22
+    pygame.draw.ellipse(s,(0,0,0,50),(cx-w//2,cy+h//2,w,5))
+    pygame.draw.ellipse(s,(155,95,55),(cx-w//2,cy-h//2,w,h))
+    for i in range(4):
+        for j in range(3):
+            tx=int(cx-w//2+5+i*7); ty=int(cy-h//2+4+j*6)
+            if tx<cx+w//2-2 and ty<cy+h//2-2:
+                pygame.draw.circle(s,(115,65,30),(tx,ty),2)
+    pygame.draw.ellipse(s,(110,60,25),(cx-w//2,cy-h//2,w,h),2)
+    pygame.draw.ellipse(s,(195,145,95),(cx-w//3,cy-h//3,w//3,h//3))
+    return s
+
+def _draw_virus_measles(size=40):
+    s=pygame.Surface((size,size),pygame.SRCALPHA)
+    cx=cy=size//2; r=size//2-10
+    pygame.draw.ellipse(s,(0,0,0,50),(cx-r,size-5,r*2,5))
+    for i in range(14):
+        a=i*math.pi*2/14
+        sx2=cx+math.cos(a)*(r-1); sy2=cy+math.sin(a)*(r-1)
+        tx=cx+math.cos(a)*(r+6); ty=cy+math.sin(a)*(r+6)
+        pygame.draw.line(s,(190,70,50),(int(sx2),int(sy2)),(int(tx),int(ty)),1)
+        pygame.draw.circle(s,(220,100,80),(int(tx),int(ty)),2)
+    pygame.draw.circle(s,(210,110,85),(cx,cy),r)
+    pygame.draw.circle(s,(235,155,130),(cx-r//3,cy-r//3),r//2)
+    pygame.draw.circle(s,(165,65,40),(cx,cy),r,2)
+    return s
+
+def _draw_virus_dengue(size=38):
+    s=pygame.Surface((size,size),pygame.SRCALPHA)
+    cx=cy=size//2; r=size//2-10
+    pygame.draw.ellipse(s,(0,0,0,50),(cx-r,size-5,r*2,5))
+    # Icosahedral facets hint
+    for i in range(5):
+        a=i*math.pi*2/5
+        px2=int(cx+math.cos(a)*r*0.6); py2=int(cy+math.sin(a)*r*0.6)
+        px3=int(cx+math.cos(a+math.pi*2/5)*r*0.6); py3=int(cy+math.sin(a+math.pi*2/5)*r*0.6)
+        pygame.draw.line(s,(180,120,30),(px2,py2),(px3,py3),1)
+        pygame.draw.line(s,(180,120,30),(cx,cy),(px2,py2),1)
+    pygame.draw.circle(s,(215,165,50),(cx,cy),r)
+    pygame.draw.circle(s,(240,200,100),(cx-r//3,cy-r//3),r//2)
+    pygame.draw.circle(s,(160,110,20),(cx,cy),r,2)
+    return s
+
+# Virus pool: unlocks over time
+VIRUS_STAGES=[
+    {"time":0,   "key":"virus_corona",    "name":"SARS-CoV-2",    "hp":1.0,"spd":1.0,"dmg":1.0,"r":14},
+    {"time":80,  "key":"virus_influenza", "name":"Influenza",      "hp":0.85,"spd":1.25,"dmg":0.9,"r":13},
+    {"time":160, "key":"virus_hiv",       "name":"HIV",            "hp":1.3,"spd":0.8,"dmg":1.5,"r":13},
+    {"time":240, "key":"virus_ebola",     "name":"Ebola",          "hp":1.5,"spd":1.1,"dmg":1.8,"r":14},
+    {"time":320, "key":"virus_rabies",    "name":"Rabies",         "hp":1.1,"spd":1.5,"dmg":1.3,"r":12},
+    {"time":400, "key":"virus_plague",    "name":"ペスト菌",        "hp":1.4,"spd":1.0,"dmg":1.6,"r":11},
+    {"time":460, "key":"virus_measles",   "name":"Measles",        "hp":0.9,"spd":1.3,"dmg":1.0,"r":13},
+    {"time":510, "key":"virus_dengue",    "name":"Dengue",         "hp":1.1,"spd":1.2,"dmg":1.2,"r":13},
+    {"time":555, "key":"virus_smallpox",  "name":"Smallpox",       "hp":1.8,"spd":0.7,"dmg":2.0,"r":14},
+    {"time":580, "key":"virus_phage",     "name":"Bacteriophage",  "hp":0.7,"spd":1.8,"dmg":0.8,"r":13},
+]
+
+def _draw_plague_doctor(size=64):
+    s=pygame.Surface((size,size),pygame.SRCALPHA)
+    cx=size//2
+    # Shadow
+    pygame.draw.ellipse(s,(0,0,0,55),(cx-18,size-12,36,10))
+    # Long flowing coat
+    coat=[(cx-13,26),(cx+13,26),(cx+17,62),(cx-17,62)]
+    pygame.draw.polygon(s,(26,18,36),coat)
+    pygame.draw.polygon(s,(16,10,24),coat,1)
+    # Coat fold lines
+    pygame.draw.line(s,(18,12,26),(cx-2,28),(cx-5,60),1)
+    pygame.draw.line(s,(18,12,26),(cx+5,28),(cx+8,60),1)
+    # Wide sleeves
+    pygame.draw.polygon(s,(26,18,36),[(cx+10,28),(cx+22,40),(cx+22,50),(cx+14,46)])
+    pygame.draw.polygon(s,(26,18,36),[(cx-10,28),(cx-22,42),(cx-22,52),(cx-14,48)])
+    # Leather gloves
+    pygame.draw.circle(s,(72,52,28),(cx+22,50),4)
+    pygame.draw.circle(s,(72,52,28),(cx-22,52),4)
+    # Walking cane (held in right glove, angled upward)
+    pygame.draw.line(s,(85,62,32),(cx+22,50),(cx+30,8),2)
+    pygame.draw.circle(s,(100,75,40),(cx+30,8),3)
+    pygame.draw.line(s,(65,48,24),(cx+28,11),(cx+33,11),2)  # cross-piece
+    # Neck
+    pygame.draw.rect(s,(28,20,40),(cx-5,18,10,10))
+    # Head (profile - slightly turned LEFT)
+    pygame.draw.ellipse(s,(32,24,44),(cx-11,7,20,16))
+    # === BEAK MASK - SIDEWAYS pointing LEFT ===
+    bx=cx-8; by=14  # beak root (left side of head)
+    beak=[(bx, by-5),(bx-22, by),(bx, by+5)]
+    pygame.draw.polygon(s,(185,162,110),beak)       # cream leather
+    pygame.draw.polygon(s,(140,115,72),beak,1)      # outline
+    # Beak centre seam
+    pygame.draw.line(s,(140,115,72),(bx,by),(bx-19,by),1)
+    # Nostril holes
+    pygame.draw.circle(s,(95,72,42),(bx-8,by-1),1)
+    pygame.draw.circle(s,(95,72,42),(bx-13,by),1)
+    # Goggle (front-facing side, now LEFT)
+    pygame.draw.circle(s,(60,48,20),(cx-2,11),4)
+    pygame.draw.circle(s,(42,32,12),(cx-2,11),4,1)
+    pygame.draw.circle(s,(12,8,18),(cx-2,11),2)
+    pygame.draw.circle(s,(110,88,44),(cx-1,10),1)   # glint
+    # Wide-brim hat (angled - wider right side faces camera)
+    pygame.draw.ellipse(s,(10,7,16),(cx-15,5,32,9)) # brim
+    pygame.draw.rect(s,(10,7,16),(cx-9,0,18,8),border_radius=2)  # crown
+    pygame.draw.ellipse(s,(22,16,30),(cx-15,5,32,9),1)  # brim rim
+    pygame.draw.rect(s,(22,16,30),(cx-9,0,18,8),1,border_radius=2)
+    # Purple aura glow
+    gs=pygame.Surface((size,size),pygame.SRCALPHA)
+    pygame.draw.circle(gs,(140,0,220,26),(cx,cx),cx-2)
+    s.blit(gs,(0,0))
     return s
 
 def _draw_boss(size=88):
@@ -196,9 +542,20 @@ def build_sprites():
         "knight":       _draw_knight(64),
         "mage":         _draw_mage(64),
         "rogue":        _draw_rogue(64),
-        "enemy_normal": _draw_enemy_normal(36),
-        "enemy_fast":   _draw_enemy_fast(28),
-        "boss":         _draw_boss(88),
+        "enemy_normal":   _draw_enemy_normal(40),
+        "enemy_fast":     _draw_enemy_fast(32),
+        "virus_corona":   _draw_enemy_normal(40),
+        "virus_influenza":_draw_virus_influenza(40),
+        "virus_hiv":      _draw_virus_hiv(40),
+        "virus_ebola":    _draw_virus_ebola(52),
+        "virus_rabies":   _draw_virus_rabies(44),
+        "virus_plague":   _draw_virus_plague(40),
+        "virus_measles":  _draw_virus_measles(40),
+        "virus_dengue":   _draw_virus_dengue(38),
+        "virus_smallpox": _draw_virus_smallpox(44),
+        "virus_phage":    _draw_virus_phage(72),
+        "plague_doctor":  _draw_plague_doctor(64),
+        "boss":           _draw_boss(88),
     }
 
 
@@ -303,20 +660,22 @@ class SoundManager:
 # Visual effects
 # ─────────────────────────────────────────────
 class Particle:
-    __slots__=("x","y","vx","vy","life","max_life","color","r","alive")
+    __slots__=("x","y","z","vx","vy","vz","life","max_life","color","r","alive")
     def __init__(self,x,y,color):
         a=random.uniform(0,math.pi*2); v=random.uniform(60,200)
         self.x,self.y=x,y; self.vx,self.vy=math.cos(a)*v,math.sin(a)*v
+        self.z=10.0; self.vz=random.uniform(80,200)
         self.life=self.max_life=random.uniform(0.3,0.7)
         self.color=color; self.r=random.randint(3,7); self.alive=True
     def update(self,dt):
         self.x+=self.vx*dt; self.vx*=0.92
         self.y+=self.vy*dt; self.vy*=0.92
+        self.vz-=300*dt; self.z=max(0,self.z+self.vz*dt)
         self.life-=dt
         if self.life<=0: self.alive=False
     def draw(self,surf,ox,oy):
         alpha=int(255*self.life/self.max_life)
-        sx=int(self.x-ox+W//2); sy=int(self.y-oy+H//2)
+        sx,sy=iso_pos(self.x,self.y,self.z,ox,oy)
         s=pygame.Surface((self.r*2,self.r*2),pygame.SRCALPHA)
         r,g,b=self.color; pygame.draw.circle(s,(r,g,b,alpha),(self.r,self.r),self.r)
         surf.blit(s,(sx-self.r,sy-self.r))
@@ -335,11 +694,12 @@ class RingEffect:
         prog=1-self.life/self.max_life
         r=max(1,int(self.max_r*prog))
         alpha=int(255*self.life/self.max_life)
-        sx=int(self.x-ox+W//2); sy=int(self.y-oy+H//2)
-        s=pygame.Surface((r*2+4,r*2+4),pygame.SRCALPHA)
+        sx,sy=iso_pos(self.x,self.y,3,ox,oy)
+        rw=max(2,int(r*2.0)); rh=max(1,int(r*0.7))
+        s=pygame.Surface((rw+4,rh+4),pygame.SRCALPHA)
         cr,cg,cb=self.color
-        pygame.draw.circle(s,(cr,cg,cb,alpha),(r+2,r+2),r,self.width)
-        surf.blit(s,(sx-r-2,sy-r-2))
+        pygame.draw.ellipse(s,(cr,cg,cb,alpha),(0,0,rw+4,rh+4),self.width)
+        surf.blit(s,(sx-rw//2-2,sy-rh//2-2))
 
 
 class ScreenShake:
@@ -379,19 +739,18 @@ class Bullet:
         for i,(tx,ty) in enumerate(self.trail):
             ratio=(i+1)/n
             r=max(1,int(self.radius*ratio*0.65))
-            tsx=int(tx-ox+W//2); tsy=int(ty-oy+H//2)
+            tsx,tsy=iso_pos(tx,ty,26,ox,oy)
             ts=pygame.Surface((r*2+2,r*2+2),pygame.SRCALPHA)
             pygame.draw.circle(ts,(cr,cg,cb,int(90*ratio)),(r+1,r+1),r)
             surf.blit(ts,(tsx-r-1,tsy-r-1))
 
     def draw(self,surf,ox,oy):
         self._draw_trail(surf,ox,oy)
-        sx=int(self.x-ox+W//2); sy=int(self.y-oy+H//2)
+        sx,sy=iso_pos(self.x,self.y,26,ox,oy)
         cr,cg,cb=self.color
         r=self.radius
 
         if self.style=="orb":          # Wand — glowing orb
-            # Outer glow
             gs=r+5; gsurf=pygame.Surface((gs*2,gs*2),pygame.SRCALPHA)
             pygame.draw.circle(gsurf,(cr,cg,cb,55),(gs,gs),gs)
             surf.blit(gsurf,(sx-gs,sy-gs))
@@ -430,11 +789,11 @@ class AxeBullet(Bullet):
         n=len(self.trail)
         for i,(tx,ty) in enumerate(self.trail):
             ratio=(i+1)/max(n,1); tr=max(1,int(self.radius*ratio*0.55))
-            tsx=int(tx-ox+W//2); tsy=int(ty-oy+H//2)
+            tsx,tsy=iso_pos(tx,ty,26,ox,oy)
             ts=pygame.Surface((tr*2+2,tr*2+2),pygame.SRCALPHA)
             pygame.draw.circle(ts,(255,140,0,int(75*ratio)),(tr+1,tr+1),tr)
             surf.blit(ts,(tsx-tr-1,tsy-tr-1))
-        sx=int(self.x-ox+W//2); sy=int(self.y-oy+H//2)
+        sx,sy=iso_pos(self.x,self.y,26,ox,oy)
         r=self.radius
         # Axe blade: spinning diamond
         bl=r*1.65; bw=r*0.72
@@ -474,15 +833,16 @@ class FlameZone:
                 floats.append(FloatText(e.x,e.y-20,str(int(self.damage)),ORANGE,0.5))
     def draw(self,surf,ox,oy):
         alpha=int(180*self.life/self.max_life)
-        r=self.radius; sx=int(self.x-ox+W//2); sy=int(self.y-oy+H//2)
-        s=pygame.Surface((r*2,r*2),pygame.SRCALPHA)
-        pygame.draw.circle(s,(255,100,0,alpha),(r,r),r)
-        pygame.draw.circle(s,(255,200,0,alpha//2),(r,r),r//2)
-        surf.blit(s,(sx-r,sy-r))
+        r=self.radius; sx,sy=iso_pos(self.x,self.y,2,ox,oy)
+        rw=max(2,int(r*2.0)); rh=max(1,int(r*0.7))
+        s=pygame.Surface((rw,rh),pygame.SRCALPHA)
+        pygame.draw.ellipse(s,(255,100,0,alpha),(0,0,rw,rh))
+        pygame.draw.ellipse(s,(255,200,0,alpha//2),(rw//4,rh//4,rw//2,rh//2))
+        surf.blit(s,(sx-rw//2,sy-rh//2))
         # Flickering inner sparks
         for _ in range(3):
             a=random.uniform(0,math.pi*2); rd=random.uniform(0,r*0.7)
-            fx=int(sx+math.cos(a)*rd); fy=int(sy+math.sin(a)*rd)
+            fx=int(sx+math.cos(a)*rd*1.3); fy=int(sy+math.sin(a)*rd*0.45)
             fs=pygame.Surface((6,6),pygame.SRCALPHA)
             pygame.draw.circle(fs,(255,220,50,alpha//2+60),(3,3),2)
             surf.blit(fs,(fx-3,fy-3))
@@ -517,12 +877,12 @@ class LightningBolt:
         if self.life<=0: self.alive=False
     def draw(self,surf,ox,oy):
         for seg in self.segs:
-            spts=[(int(p[0]-ox+W//2),int(p[1]-oy+H//2)) for p in seg]
+            spts=[iso_pos(p[0],p[1],28,ox,oy) for p in seg]
             if len(spts)>=2:
                 pygame.draw.lines(surf,CYAN,False,spts,3)
                 pygame.draw.lines(surf,WHITE,False,spts,1)
         for fork in self.forks:
-            spts=[(int(p[0]-ox+W//2),int(p[1]-oy+H//2)) for p in fork]
+            spts=[iso_pos(p[0],p[1],28,ox,oy) for p in fork]
             if len(spts)>=2:
                 pygame.draw.lines(surf,(80,190,255),False,spts,1)
 
@@ -542,10 +902,11 @@ class Aura:
             if dist((self.player.x,self.player.y),(e.x,e.y))<=self.radius+e.radius:
                 e.hp-=self.damage; self.hit_ids.add(id(e))
     def draw(self,surf,ox,oy):
-        r=self.radius; sx=int(self.player.x-ox+W//2); sy=int(self.player.y-oy+H//2)
-        s=pygame.Surface((r*2,r*2),pygame.SRCALPHA)
-        pygame.draw.circle(s,(200,50,50,48),(r,r),r)
-        surf.blit(s,(sx-r,sy-r))
+        r=self.radius; sx,sy=iso_pos(self.player.x,self.player.y,2,ox,oy)
+        rw=max(2,int(r*2.0)); rh=max(1,int(r*0.7))
+        s=pygame.Surface((rw,rh),pygame.SRCALPHA)
+        pygame.draw.ellipse(s,(200,50,50,48),(0,0,rw,rh))
+        surf.blit(s,(sx-rw//2,sy-rh//2))
 
 
 # ─────────────────────────────────────────────
@@ -555,7 +916,8 @@ class Gem:
     def __init__(self,x,y,value=5):
         self.x,self.y=x,y; self.value=value; self.radius=6; self.alive=True
     def draw(self,surf,ox,oy):
-        sx=int(self.x-ox+W//2); sy=int(self.y-oy+H//2)
+        draw_shadow(surf,self.x,self.y,ox,oy,self.radius,50)
+        sx,sy=iso_pos(self.x,self.y,10,ox,oy)
         pygame.draw.circle(surf,CYAN,(sx,sy),self.radius)
         pygame.draw.circle(surf,WHITE,(sx,sy),self.radius,1)
 
@@ -574,17 +936,66 @@ class Chest:
         self.bob=random.uniform(0,math.pi*2); self.reward=random.choice(CHEST_REWARDS)
     def update(self,dt): self.bob+=dt*2
     def draw(self,surf,ox,oy):
-        bob=math.sin(self.bob)*4
-        sx=int(self.x-ox+W//2); sy=int(self.y-oy+H//2+bob)
-        r=pygame.Rect(sx-14,sy-10,28,20)
+        zbob=6+math.sin(self.bob)*6
+        draw_shadow(surf,self.x,self.y,ox,oy,18,55)
+        sx,sy=iso_pos(self.x,self.y,zbob,ox,oy)
+        r=pygame.Rect(sx-14,sy-24,28,20)
         pygame.draw.rect(surf,GOLD,r,border_radius=3)
         pygame.draw.rect(surf,ORANGE,r,2,border_radius=3)
-        pygame.draw.rect(surf,(200,160,0),(sx-14,sy-14,28,8),border_radius=3)
-        pygame.draw.rect(surf,ORANGE,(sx-14,sy-14,28,8),2,border_radius=3)
-        pygame.draw.circle(surf,BLACK,(sx,sy-2),3)
+        pygame.draw.rect(surf,(200,160,0),(sx-14,sy-28,28,8),border_radius=3)
+        pygame.draw.rect(surf,ORANGE,(sx-14,sy-28,28,8),2,border_radius=3)
+        pygame.draw.circle(surf,BLACK,(sx,sy-16),3)
         gs=pygame.Surface((60,60),pygame.SRCALPHA)
         pygame.draw.circle(gs,(255,200,0,38),(30,30),30)
-        surf.blit(gs,(sx-30,sy-30))
+        surf.blit(gs,(sx-30,sy-44))
+
+class Ladder:
+    def __init__(self,x,y):
+        self.x,self.y=x,y; self.radius=20; self.alive=True
+        self.bob=0.0; self.pulse=0.0
+    def update(self,dt): self.bob+=dt*1.5; self.pulse+=dt*2.5
+    def draw(self,surf,ox,oy):
+        bv=math.sin(self.bob)*3
+        sx,sy=iso_pos(self.x,self.y,0,ox,oy)
+        shaft_h=80
+        # Shaft walls (dark stone, tapers toward top)
+        pygame.draw.polygon(surf,(22,16,30),
+            [(sx-18,sy),(sx-7,sy-shaft_h),(sx+7,sy-shaft_h),(sx+18,sy)])
+        # Stone texture lines
+        for i in range(3):
+            fy=sy-20-i*22; fw=int(18-i*3)
+            pygame.draw.line(surf,(35,26,46),(sx-fw,fy),(sx-fw+5,fy),1)
+            pygame.draw.line(surf,(35,26,46),(sx+fw-5,fy),(sx+fw,fy),1)
+        # Ground-level opening (dark oval hole)
+        pygame.draw.ellipse(surf,(5,3,10),(sx-18,sy-9,36,14))
+        pygame.draw.ellipse(surf,(50,35,70),(sx-18,sy-9,36,14),2)
+        # Light from surface at top (pulse glow)
+        pa=int(70+50*abs(math.sin(self.pulse)))
+        gs=pygame.Surface((70,35),pygame.SRCALPHA)
+        pygame.draw.ellipse(gs,(180,255,140,pa),(5,5,60,25))
+        pygame.draw.ellipse(gs,(230,255,200,pa//2),(15,8,40,16))
+        surf.blit(gs,(sx-35,sy-shaft_h-20+int(bv)))
+        # Light beam rays
+        ra=int(30+20*abs(math.sin(self.pulse)))
+        for rx,rw in [(-9,4),(0,3),(9,4)]:
+            rs=pygame.Surface((abs(rw)+2,shaft_h-10),pygame.SRCALPHA)
+            pygame.draw.rect(rs,(200,255,160,ra),(0,0,abs(rw)+2,shaft_h-10))
+            surf.blit(rs,(sx+rx-1,sy-shaft_h+5))
+        # Ladder rails (perspective - converge at top)
+        col=(175,135,55)
+        pygame.draw.line(surf,col,(sx-16,sy-4),(sx-5,sy-shaft_h+2),3)
+        pygame.draw.line(surf,col,(sx+16,sy-4),(sx+5,sy-shaft_h+2),3)
+        # Rungs (7 rungs, get smaller/closer toward top)
+        for i in range(7):
+            t=i/6
+            ry=int(sy-6-t*(shaft_h-10))
+            lx=int(sx-16+t*11); rx2=int(sx+16-t*11)
+            w=max(1,3-int(t*2))
+            pygame.draw.line(surf,col,(lx,ry),(rx2,ry),w)
+        # Pulsing label
+        lc=(int(70+80*abs(math.sin(self.pulse))),255,80)
+        lbl=font_tiny.render("▲ SURFACE",True,lc)
+        surf.blit(lbl,(sx-lbl.get_width()//2,sy-shaft_h-30+int(bv)))
 
 class FloatText:
     def __init__(self,x,y,text,color,life=1.0):
@@ -595,8 +1006,9 @@ class FloatText:
         if self.life<=0: self.alive=False
     def draw(self,surf,ox,oy):
         alpha=int(255*self.life/self.max_life)
+        sx,sy=iso_pos(self.x,self.y,50,ox,oy)
         s=font_small.render(self.text,True,self.color); s.set_alpha(alpha)
-        surf.blit(s,(int(self.x-ox+W//2),int(self.y-oy+H//2)))
+        surf.blit(s,(sx-s.get_width()//2,sy))
 
 
 # ─────────────────────────────────────────────
@@ -607,24 +1019,32 @@ class Enemy:
         self.x,self.y=x,y; self.hp=self.max_hp=hp; self.speed=speed
         self.damage=damage; self.radius=radius; self.color=color; self.xp=xp
         self.alive=True; self.hit_flash=0.0; self.sprite_key=sprite_key
+        self._hphase=random.uniform(0,math.pi*2)
     def update(self,dt,px,py,_b=None,_f=None):
         dx,dy=norm(px-self.x,py-self.y)
         self.x+=dx*self.speed*dt; self.y+=dy*self.speed*dt
         if self.hit_flash>0: self.hit_flash-=dt
     def draw(self,surf,ox,oy,sprites):
-        sx=int(self.x-ox+W//2); sy=int(self.y-oy+H//2)
+        hover=math.sin(pygame.time.get_ticks()*0.003+self._hphase)*4
+        draw_shadow(surf,self.x,self.y,ox,oy,self.radius,60)
+        gsx,gsy=iso_pos(self.x,self.y,0,ox,oy)
         spr=sprites.get(self.sprite_key)
         if spr:
+            dy=gsy-spr.get_height()-int(hover); dx=gsx-spr.get_width()//2
             if self.hit_flash>0:
                 ws=spr.copy(); ws.fill((255,255,255,160),special_flags=pygame.BLEND_RGBA_ADD)
-                surf.blit(ws,(sx-spr.get_width()//2,sy-spr.get_height()//2))
+                surf.blit(ws,(dx,dy))
             else:
-                surf.blit(spr,(sx-spr.get_width()//2,sy-spr.get_height()//2))
+                surf.blit(spr,(dx,dy))
+            bw=self.radius*2; ratio=max(0,self.hp/self.max_hp)
+            pygame.draw.rect(surf,GRAY,(gsx-self.radius,dy-8,bw,5))
+            pygame.draw.rect(surf,GREEN,(gsx-self.radius,dy-8,int(bw*ratio),5))
         else:
-            pygame.draw.circle(surf,self.color,(sx,sy),self.radius)
-        bw=self.radius*2; ratio=max(0,self.hp/self.max_hp)
-        pygame.draw.rect(surf,GRAY,(sx-self.radius,sy-self.radius-8,bw,5))
-        pygame.draw.rect(surf,GREEN,(sx-self.radius,sy-self.radius-8,int(bw*ratio),5))
+            sy2=int(gsy-self.radius-hover)
+            pygame.draw.circle(surf,self.color,(gsx,sy2),self.radius)
+            bw=self.radius*2; ratio=max(0,self.hp/self.max_hp)
+            pygame.draw.rect(surf,GRAY,(gsx-self.radius,sy2-self.radius-8,bw,5))
+            pygame.draw.rect(surf,GREEN,(gsx-self.radius,sy2-self.radius-8,int(bw*ratio),5))
 
 class Boss(Enemy):
     CHARGE_INTERVAL=5.0
@@ -655,26 +1075,36 @@ class Boss(Enemy):
             self.charge_timer=self.CHARGE_INTERVAL
             self.charge_dir=norm(px-self.x,py-self.y); self.telegraph=0.6
     def draw(self,surf,ox,oy,sprites):
-        sx=int(self.x-ox+W//2); sy=int(self.y-oy+H//2)
+        hover=math.sin(pygame.time.get_ticks()*0.002+self._hphase)*6
+        draw_shadow(surf,self.x,self.y,ox,oy,self.radius,70)
+        gsx,gsy=iso_pos(self.x,self.y,0,ox,oy)
         if self.telegraph>0:
             pulse=abs(math.sin(self.telegraph*20))*22; r=36+int(pulse)
-            s=pygame.Surface((r*2,r*2),pygame.SRCALPHA)
-            pygame.draw.circle(s,(255,50,50,115),(r,r),r)
-            surf.blit(s,(sx-r,sy-r))
+            rw=max(2,int(r*2.0)); rh=max(1,int(r*0.7))
+            s=pygame.Surface((rw,rh),pygame.SRCALPHA)
+            pygame.draw.ellipse(s,(255,50,50,115),(0,0,rw,rh))
+            surf.blit(s,(gsx-rw//2,gsy-rh//2))
         spr=sprites.get("boss")
         if spr:
+            dy=gsy-spr.get_height()-int(hover); dx=gsx-spr.get_width()//2
             if self.hit_flash>0:
                 ws=spr.copy(); ws.fill((255,255,255,160),special_flags=pygame.BLEND_RGBA_ADD)
-                surf.blit(ws,(sx-spr.get_width()//2,sy-spr.get_height()//2))
+                surf.blit(ws,(dx,dy))
             else:
-                surf.blit(spr,(sx-spr.get_width()//2,sy-spr.get_height()//2))
+                surf.blit(spr,(dx,dy))
+            bw=100; ratio=max(0,self.hp/self.max_hp)
+            pygame.draw.rect(surf,GRAY,(gsx-50,dy-14,bw,8))
+            pygame.draw.rect(surf,RED,(gsx-50,dy-14,int(bw*ratio),8))
+            lbl=font_small.render(self.name,True,YELLOW)
+            surf.blit(lbl,(gsx-lbl.get_width()//2,dy-28))
         else:
-            pygame.draw.circle(surf,PURPLE,(sx,sy),self.radius)
-        bw=100; ratio=max(0,self.hp/self.max_hp)
-        pygame.draw.rect(surf,GRAY,(sx-50,sy-self.radius-14,bw,8))
-        pygame.draw.rect(surf,RED,(sx-50,sy-self.radius-14,int(bw*ratio),8))
-        lbl=font_small.render(self.name,True,YELLOW)
-        surf.blit(lbl,(sx-lbl.get_width()//2,sy-self.radius-28))
+            sy2=int(gsy-self.radius-hover)
+            pygame.draw.circle(surf,PURPLE,(gsx,sy2),self.radius)
+            bw=100; ratio=max(0,self.hp/self.max_hp)
+            pygame.draw.rect(surf,GRAY,(gsx-50,sy2-self.radius-14,bw,8))
+            pygame.draw.rect(surf,RED,(gsx-50,sy2-self.radius-14,int(bw*ratio),8))
+            lbl=font_small.render(self.name,True,YELLOW)
+            surf.blit(lbl,(gsx-lbl.get_width()//2,sy2-self.radius-28))
 
 
 # ─────────────────────────────────────────────
@@ -683,13 +1113,16 @@ class Boss(Enemy):
 CHARACTERS=[
     {"name":"Knight","desc":["High HP & defense","Starts with Axe"],
      "color":BLUE,  "hp":200,"speed":175,"sprite":"knight",
-     "weapons":{"wand":0,"axe":1,"cross":0,"garlic":0,"lightning":0,"flame":0},"wand_cd":0.8},
+     "weapons":{"wand":0,"axe":1,"cross":0,"garlic":0,"lightning":0,"flame":0,"plague":0},"wand_cd":0.8},
     {"name":"Mage",  "desc":["Fast magic attack","Starts with Wand Lv2"],
      "color":PURPLE,"hp":90, "speed":230,"sprite":"mage",
-     "weapons":{"wand":2,"axe":0,"cross":0,"garlic":0,"lightning":0,"flame":0},"wand_cd":0.38},
+     "weapons":{"wand":2,"axe":0,"cross":0,"garlic":0,"lightning":0,"flame":0,"plague":0},"wand_cd":0.38},
     {"name":"Rogue", "desc":["Very fast & agile","Starts with Holy Cross"],
      "color":ORANGE,"hp":110,"speed":290,"sprite":"rogue",
-     "weapons":{"wand":0,"axe":0,"cross":1,"garlic":0,"lightning":0,"flame":0},"wand_cd":0.8},
+     "weapons":{"wand":0,"axe":0,"cross":1,"garlic":0,"lightning":0,"flame":0,"plague":0},"wand_cd":0.8},
+    {"name":"Plague Dr","desc":["Instant-kill aura","Enemies within 1 tile vanish"],
+     "color":(160,0,220),"hp":150,"speed":210,"sprite":"plague_doctor",
+     "weapons":{"wand":0,"axe":0,"cross":0,"garlic":0,"lightning":0,"flame":0,"plague":1},"wand_cd":0.8},
 ]
 
 
@@ -702,6 +1135,7 @@ class Player:
         self.x=self.y=0.0; self.max_hp=char_data["hp"]; self.hp=self.max_hp
         self.speed=char_data["speed"]; self.char_color=char_data["color"]
         self.radius=16; self.alive=True; self.hurt_sound_cd=0.0
+        self.bob=0.0; self.ice_dir=(0.0,0.0)
         self.sprite=sprites.get(char_data["sprite"])
         self.weapons={
             "wand":     {"level":char_data["weapons"]["wand"],     "timer":0.0,"cooldown":char_data["wand_cd"]},
@@ -710,17 +1144,45 @@ class Player:
             "garlic":   {"level":char_data["weapons"]["garlic"]},
             "lightning":{"level":char_data["weapons"]["lightning"],"timer":0.0,"cooldown":2.0},
             "flame":    {"level":char_data["weapons"]["flame"],    "timer":0.0,"cooldown":4.0},
+            "plague":   {"level":char_data["weapons"].get("plague",0)},
         }
         self.aura=None
 
-    def update(self,dt,keys,enemies,bullets,floats,flames,bolts,rings,particles,snd,shake):
+    def update(self,dt,keys,enemies,bullets,floats,flames,bolts,rings,particles,snd,shake,terrain_map=None):
         dx=dy=0
         if keys[pygame.K_w] or keys[pygame.K_UP]:   dy-=1
         if keys[pygame.K_s] or keys[pygame.K_DOWN]:  dy+=1
         if keys[pygame.K_a] or keys[pygame.K_LEFT]:  dx-=1
         if keys[pygame.K_d] or keys[pygame.K_RIGHT]: dx+=1
         ndx,ndy=norm(dx,dy)
-        self.x+=ndx*self.speed*dt; self.y+=ndy*self.speed*dt
+
+        cur_t=terrain_map.at(self.x,self.y) if terrain_map else TERRAIN_GRASS
+        if cur_t==TERRAIN_ICE:
+            if dx or dy:
+                self.ice_dir=(self.ice_dir[0]*0.88+ndx*0.12,
+                              self.ice_dir[1]*0.88+ndy*0.12)
+                il=math.hypot(*self.ice_dir)
+                if il>0: self.ice_dir=(self.ice_dir[0]/il,self.ice_dir[1]/il)
+            mdx,mdy=self.ice_dir; eff_speed=self.speed
+        elif cur_t==TERRAIN_SWAMP:
+            mdx,mdy=ndx,ndy; eff_speed=self.speed*0.35
+            self.ice_dir=(0.0,0.0)
+        else:
+            mdx,mdy=ndx,ndy; eff_speed=self.speed
+            if dx or dy: self.ice_dir=(ndx,ndy)
+            else:        self.ice_dir=(0.0,0.0)
+
+        new_x=self.x+mdx*eff_speed*dt; new_y=self.y+mdy*eff_speed*dt
+        if terrain_map:
+            if terrain_map.at(new_x,new_y)==TERRAIN_MOUNTAIN:
+                if terrain_map.at(new_x,self.y)!=TERRAIN_MOUNTAIN: self.x=new_x
+                if terrain_map.at(self.x,new_y)!=TERRAIN_MOUNTAIN: self.y=new_y
+            else:
+                self.x,self.y=new_x,new_y
+        else:
+            self.x,self.y=new_x,new_y
+
+        self.bob+=dt*(5 if (dx or dy) else 1.5)
         self.hurt_sound_cd=max(0,self.hurt_sound_cd-dt)
 
         target=min(enemies,key=lambda e:dist((self.x,self.y),(e.x,e.y)),default=None)
@@ -830,15 +1292,30 @@ class Player:
         if self.hp<=0: self.alive=False
 
     def draw(self,surf,ox,oy):
-        sx=int(self.x-ox+W//2); sy=int(self.y-oy+H//2)
+        hover=5+math.sin(self.bob)*5
+        draw_shadow(surf,self.x,self.y,ox,oy,self.radius,70)
+        gsx,gsy=iso_pos(self.x,self.y,0,ox,oy)
         if self.sprite:
-            surf.blit(self.sprite,(sx-self.sprite.get_width()//2,sy-self.sprite.get_height()//2))
+            dy=gsy-self.sprite.get_height()-int(hover)
+            dx=gsx-self.sprite.get_width()//2
+            surf.blit(self.sprite,(dx,dy))
+            bw=80; ratio=max(0,self.hp/self.max_hp)
+            pygame.draw.rect(surf,GRAY,(gsx-40,dy-14,bw,8))
+            pygame.draw.rect(surf,RED, (gsx-40,dy-14,int(bw*ratio),8))
         else:
-            pygame.draw.circle(surf,self.char_color,(sx,sy),self.radius)
-        bw=80; ratio=max(0,self.hp/self.max_hp)
-        pygame.draw.rect(surf,GRAY,(sx-40,sy-self.radius-14,bw,8))
-        pygame.draw.rect(surf,RED, (sx-40,sy-self.radius-14,int(bw*ratio),8))
+            sy2=int(gsy-self.radius-hover)
+            pygame.draw.circle(surf,self.char_color,(gsx,sy2),self.radius)
+            bw=80; ratio=max(0,self.hp/self.max_hp)
+            pygame.draw.rect(surf,GRAY,(gsx-40,sy2-self.radius-14,bw,8))
+            pygame.draw.rect(surf,RED, (gsx-40,sy2-self.radius-14,int(bw*ratio),8))
         if self.aura: self.aura.draw(surf,ox,oy)
+        if self.weapons.get("plague",{}).get("level",0)>=1:
+            r=80+self.radius; gsx2,gsy2=iso_pos(self.x,self.y,2,ox,oy)
+            rw=max(2,int(r*2.0)); rh=max(1,int(r*0.7))
+            ps=pygame.Surface((rw,rh),pygame.SRCALPHA)
+            pa=int(18+14*abs(math.sin(pygame.time.get_ticks()*0.003)))
+            pygame.draw.ellipse(ps,(140,0,220,pa),(0,0,rw,rh))
+            surf.blit(ps,(gsx2-rw//2,gsy2-rh//2))
 
 
 # ─────────────────────────────────────────────
@@ -878,14 +1355,21 @@ def apply_chest_reward(player,key):
 def spawn_enemy(px,py,elapsed):
     a=random.uniform(0,math.pi*2); r=700
     x=px+math.cos(a)*r; y=py+math.sin(a)*r; diff=min(elapsed/60,5)
+    pool=[v for v in VIRUS_STAGES if v["time"]<=elapsed]
+    v=random.choice(pool)
     if random.random()<0.18:
-        return Enemy(x,y,hp=28+diff*8, speed=175+diff*22,damage=8, radius=10,color=(255,72,72),xp=3,sprite_key="enemy_fast")
-    return Enemy(x,y,hp=60+diff*25,speed=90+diff*10,damage=15,radius=14,color=RED,xp=5,sprite_key="enemy_normal")
+        return Enemy(x,y,hp=(28+diff*8)*v["hp"],speed=(175+diff*22)*v["spd"],
+                     damage=8*v["dmg"],radius=max(8,v["r"]-3),
+                     color=(255,72,72),xp=3,sprite_key=v["key"])
+    return Enemy(x,y,hp=(60+diff*25)*v["hp"],speed=(90+diff*10)*v["spd"],
+                 damage=15*v["dmg"],radius=v["r"],color=RED,xp=5,sprite_key=v["key"])
 
-def maybe_spawn(px,py,elapsed,since_last,enemies):
+def maybe_spawn(px,py,elapsed,since_last,enemies,underground=False):
     rate=max(0.3,1.5-elapsed/120)
     if since_last>=rate:
-        for _ in range(min(1+int(elapsed//30),6)):
+        count=min(1+int(elapsed//30),6)
+        if underground: count*=10
+        for _ in range(count):
             enemies.append(spawn_enemy(px,py,elapsed))
         return 0.0
     return since_last
@@ -893,6 +1377,12 @@ def maybe_spawn(px,py,elapsed,since_last,enemies):
 def spawn_boss(px,py,level):
     a=random.uniform(0,math.pi*2)
     return Boss(px+math.cos(a)*700,py+math.sin(a)*700,level)
+
+def spawn_magma_enemy(px,py,elapsed):
+    diff=min(elapsed/60,5)
+    col=random.choice([(255,80,0),(210,45,0),(255,130,20),(180,50,0)])
+    return Enemy(px,py,hp=50+diff*18,speed=105+diff*12,damage=20,
+                 radius=13,color=col,xp=7,sprite_key="enemy_normal")
 
 # ─────────────────────────────────────────────
 # Underground UI helpers
@@ -1090,13 +1580,14 @@ def character_select(surf, sprites):
         surf.blit(sub_s, (W//2-sub_s.get_width()//2, 120))
 
         mx, my = pygame.mouse.get_pos()
-        cw2, ch2 = 316, 295
-        total_w  = len(CHARACTERS)*cw2 + (len(CHARACTERS)-1)*28
-        sx0      = W//2 - total_w//2
+        ch2=295; gap=18
+        cw2=min(304,(W-40-(len(CHARACTERS)-1)*gap)//len(CHARACTERS))
+        total_w=len(CHARACTERS)*cw2+(len(CHARACTERS)-1)*gap
+        sx0=W//2-total_w//2
         char_rects = []
 
         for i, cd in enumerate(CHARACTERS):
-            rx = sx0 + i*(cw2+28); ry = 155
+            rx = sx0 + i*(cw2+gap); ry = 155
             rect = pygame.Rect(rx, ry, cw2, ch2); char_rects.append(rect)
             hover = rect.collidepoint(mx, my)
             c     = cd["color"]
@@ -1205,18 +1696,118 @@ def _scan_overlay(surf, rect, alpha=18):
         surf.blit(s, (x, y+row))
 
 
-def draw_bg(surf, ox, oy):
-    surf.fill(DARK)
-    step = 80; ox_mod = int(ox)%step; oy_mod = int(oy)%step
-    # Grid lines
-    for gx in range(-1, W//step+2):
-        pygame.draw.line(surf, UI_GRID, (gx*step-ox_mod, 0), (gx*step-ox_mod, H))
-    for gy in range(-1, H//step+2):
-        pygame.draw.line(surf, UI_GRID, (0, gy*step-oy_mod), (W, gy*step-oy_mod))
-    # Glowing dots at intersections
-    for gx in range(-1, W//step+2):
-        for gy in range(-1, H//step+2):
-            pygame.draw.circle(surf, (42, 30, 68), (gx*step-ox_mod, gy*step-oy_mod), 2)
+def draw_bg(surf, ox, oy, terrain_map=None, underground=False):
+    surf.fill((4,3,8) if underground else DARK)
+    step = TILE_STEP
+    RANGE = 13
+    t = pygame.time.get_ticks() * 0.001
+    cam_gx = int(ox / step); cam_gy = int(oy / step)
+    tiles = []
+    for gx in range(cam_gx - RANGE, cam_gx + RANGE + 1):
+        for gy in range(cam_gy - RANGE, cam_gy + RANGE + 1):
+            tiles.append((gx + gy, gx, gy))
+    tiles.sort()
+    for _, gx, gy in tiles:
+        wx, wy = gx * step, gy * step
+        p0 = iso_pos(wx,      wy,      0, ox, oy)
+        p1 = iso_pos(wx+step, wy,      0, ox, oy)
+        p2 = iso_pos(wx+step, wy+step, 0, ox, oy)
+        p3 = iso_pos(wx,      wy+step, 0, ox, oy)
+        pts = [p0, p1, p2, p3]
+        if max(p[0] for p in pts)<0 or min(p[0] for p in pts)>W: continue
+        if max(p[1] for p in pts)<0 or min(p[1] for p in pts)>H: continue
+
+        if underground:
+            tile_col=(18,12,22) if (gx+gy)%2==0 else (13,9,16)
+            grid_col=(28,20,36); tt=-1
+        elif terrain_map:
+            tt=terrain_map.get(gx,gy)
+            cols=TERRAIN_COLS[tt]; tile_col=cols[(gx+gy)%2]
+            grid_col=tuple(min(c+8,255) for c in tile_col)
+        else:
+            tt=-1
+            tile_col=(14,11,24) if (gx+gy)%2==0 else (10,8,18)
+            grid_col=UI_GRID
+
+        if tt==TERRAIN_MOUNTAIN:
+            h=18
+            face_l=[pts[2],pts[3],(pts[3][0],pts[3][1]-h),(pts[2][0],pts[2][1]-h)]
+            face_r=[pts[1],pts[2],(pts[2][0],pts[2][1]-h),(pts[1][0],pts[1][1]-h)]
+            pygame.draw.polygon(surf,(45,40,33),face_l)
+            pygame.draw.polygon(surf,(55,50,42),face_r)
+            top=[(p[0],p[1]-h) for p in pts]
+            pygame.draw.polygon(surf,tile_col,top)
+            pygame.draw.polygon(surf,grid_col,top,1)
+        else:
+            pygame.draw.polygon(surf,tile_col,pts)
+            pygame.draw.polygon(surf,grid_col,pts,1)
+            if tt==TERRAIN_MAGMA:
+                lv=int(190+50*abs(math.sin(t*2.5+gx*0.7+gy*0.5)))
+                cx=sum(p[0] for p in pts)//4; cy=sum(p[1] for p in pts)//4
+                pygame.draw.circle(surf,(lv,lv//5,0),(cx,cy),7)
+                pygame.draw.line(surf,(lv,lv//4,0),pts[0],(cx,cy),1)
+                pygame.draw.line(surf,(lv,lv//4,0),pts[1],(cx,cy),1)
+            elif tt==TERRAIN_ICE:
+                cx=sum(p[0] for p in pts)//4; cy=sum(p[1] for p in pts)//4
+                pygame.draw.circle(surf,(200,235,255),(cx,cy),4)
+
+    # ── Zone-level overlays: valley=unified pit, swamp=unified wetland ──
+    if not underground and terrain_map:
+        vis_zones={}
+        for gx in range(cam_gx-RANGE,cam_gx+RANGE+1):
+            for gy in range(cam_gy-RANGE,cam_gy+RANGE+1):
+                zx,zy=gx//ZONE_SIZE,gy//ZONE_SIZE
+                if (zx,zy) not in vis_zones:
+                    vis_zones[(zx,zy)]=terrain_map._zone_type(zx,zy)
+        for (zx,zy),tt in sorted(vis_zones.items(),key=lambda kv:kv[0][0]+kv[0][1]):
+            if tt not in (TERRAIN_VALLEY,TERRAIN_SWAMP): continue
+            ws=ZONE_SIZE*step
+            wx0=zx*ws; wy0=zy*ws
+            zp=[iso_pos(wx0,wy0,0,ox,oy),iso_pos(wx0+ws,wy0,0,ox,oy),
+                iso_pos(wx0+ws,wy0+ws,0,ox,oy),iso_pos(wx0,wy0+ws,0,ox,oy)]
+            if max(p[0] for p in zp)<0 or min(p[0] for p in zp)>W: continue
+            if max(p[1] for p in zp)<0 or min(p[1] for p in zp)>H: continue
+            zsc=((zp[0][0]+zp[2][0])//2,(zp[0][1]+zp[2][1])//2)
+            def zring(r): return [(int(zsc[0]+(p[0]-zsc[0])*r),int(zsc[1]+(p[1]-zsc[1])*r)) for p in zp]
+
+            if tt==TERRAIN_VALLEY:
+                N=16
+                for ri in range(N,0,-1):
+                    r=ri/N
+                    rpts=zring(r)
+                    if ri>int(N*0.55):
+                        v=int((ri-N*0.45)*5.5); col=(v,v//2,v+5)
+                    else:
+                        v=max(0,int(ri*2)); col=(v,v//4,v//2)
+                    pygame.draw.polygon(surf,col,rpts)
+                # Terrace ledge lines
+                for ri in range(N,1,-2):
+                    ec=int(42+(N-ri)*3)
+                    pygame.draw.polygon(surf,(ec,ec//2,ec+6),zring(ri/N),1)
+                # Absolute void center
+                pygame.draw.polygon(surf,(0,0,0),zring(0.05))
+
+            elif tt==TERRAIN_SWAMP:
+                # Scattered stones on muddy brown ground
+                rng_z=random.Random(zx*2311+zy*1777)
+                for _ in range(30):
+                    rt=rng_z.uniform(0.04,0.96); rs=rng_z.uniform(0.04,0.96)
+                    rsx2,rsy2=iso_pos(wx0+rt*ws,wy0+rs*ws,0,ox,oy)
+                    sw=rng_z.randint(5,14); sh=max(3,sw//2+rng_z.randint(-1,1))
+                    sv=rng_z.randint(68,105)
+                    sc=(sv,int(sv*0.82),int(sv*0.62))
+                    pygame.draw.ellipse(surf,sc,(rsx2-sw//2,rsy2-sh//2,sw,sh))
+                    # Highlight
+                    hv=min(sv+30,255)
+                    pygame.draw.ellipse(surf,(hv,int(hv*0.85),int(hv*0.68)),
+                                        (rsx2-sw//2,rsy2-sh//2,max(2,sw//2),max(1,sh//2)))
+
+    dot_col=(42,30,68) if not underground else (30,22,42)
+    for gx in range(cam_gx - RANGE, cam_gx + RANGE + 1):
+        for gy in range(cam_gy - RANGE, cam_gy + RANGE + 1):
+            px, py = iso_pos(gx * step, gy * step, 0, ox, oy)
+            if 0 <= px <= W and 0 <= py <= H:
+                pygame.draw.circle(surf, dot_col, (px, py), 2)
 
 
 # ─────────────────────────────────────────────
@@ -1232,6 +1823,11 @@ def run_game(snd,sprites,char_data):
     VICTORY_TIME=600
     shake=ScreenShake()
     state="play"; levelup_opts=[]; levelup_rects=[]; victory=False
+    # Terrain
+    terrain_map=TerrainMap()
+    underground=False; surface_pos=(0.0,0.0)
+    ladders=[]; magma_spawn_cd=0.0
+    cur_terrain=TERRAIN_GRASS; last_terrain=TERRAIN_GRASS; terrain_notify=0.0
     snd.start_bgm()
 
     while True:
@@ -1272,7 +1868,40 @@ def run_game(snd,sprites,char_data):
                 since_chest=0.0; a=random.uniform(0,math.pi*2); rd=random.uniform(150,350)
                 chests.append(Chest(player.x+math.cos(a)*rd,player.y+math.sin(a)*rd))
 
-            player.update(dt,keys,enemies,bullets,floats,flames,bolts,rings,particles,snd,shake)
+            player.update(dt,keys,enemies,bullets,floats,flames,bolts,rings,particles,snd,shake,
+                          None if underground else terrain_map)
+
+            # ── Terrain effects ──
+            cur_terrain=terrain_map.at(player.x,player.y) if not underground else TERRAIN_GRASS
+            if cur_terrain!=last_terrain:
+                last_terrain=cur_terrain; terrain_notify=2.5
+            if terrain_notify>0: terrain_notify-=dt
+
+            if cur_terrain==TERRAIN_MAGMA:
+                player.hp-=10*dt
+                if player.hurt_sound_cd<=0: snd.play("hurt"); player.hurt_sound_cd=0.5
+                magma_spawn_cd-=dt
+                if magma_spawn_cd<=0:
+                    magma_spawn_cd=random.uniform(3.0,5.0)
+                    a=random.uniform(0,math.pi*2); r=random.uniform(300,550)
+                    enemies.append(spawn_magma_enemy(player.x+math.cos(a)*r,player.y+math.sin(a)*r,elapsed))
+                    floats.append(FloatText(player.x,player.y-60,"Magma Enemy!",ORANGE,1.5))
+
+            if cur_terrain==TERRAIN_VALLEY and not underground:
+                underground=True; surface_pos=(player.x,player.y)
+                la=random.uniform(0,math.pi*2); lr=random.uniform(900,1400)
+                ladders=[Ladder(player.x+math.cos(la)*lr,player.y+math.sin(la)*lr)]
+                floats.append(FloatText(player.x,player.y-80,"FELL INTO THE ABYSS!",(150,80,255),3.0))
+                snd.play("hurt"); shake.shake(10,0.5)
+
+            for l in ladders:
+                l.update(dt)
+                if dist((player.x,player.y),(l.x,l.y))<player.radius+l.radius:
+                    l.alive=False; underground=False
+                    player.x,player.y=surface_pos
+                    floats.append(FloatText(player.x,player.y-60,"CLIMBED BACK UP!",GREEN,2.0))
+                    snd.play("chest")
+            ladders=[l for l in ladders if l.alive]
 
             for b in bullets: b.update(dt)
             bullets=[b for b in bullets if b.alive]
@@ -1283,8 +1912,16 @@ def run_game(snd,sprites,char_data):
             for r in rings: r.update(dt)
             rings=[r for r in rings if r.alive]
 
-            since_spawn=maybe_spawn(player.x,player.y,elapsed,since_spawn,enemies)
+            since_spawn=maybe_spawn(player.x,player.y,elapsed,since_spawn,enemies,underground)
             for e in enemies: e.update(dt,player.x,player.y)
+
+            # Plague doctor instant-kill aura (1 tile = 80 units)
+            if player.weapons.get("plague",{}).get("level",0)>=1:
+                for e in enemies:
+                    if not isinstance(e,Boss) and dist((player.x,player.y),(e.x,e.y))<80+e.radius:
+                        if e.hp>0:
+                            e.hp=0
+                            rings.append(RingEffect(e.x,e.y,(140,0,220),e.radius*2+8,2,0.22))
 
             # Bullet-enemy collision with impact effects
             for b in bullets:
@@ -1340,18 +1977,65 @@ def run_game(snd,sprites,char_data):
 
         sx_off,sy_off=shake.update(dt)
         ox=player.x+sx_off; oy=player.y+sy_off
-        draw_bg(screen,ox,oy)
-        for c in chests:    c.draw(screen,ox,oy)
-        for g in gems:      g.draw(screen,ox,oy)
+        draw_bg(screen,ox,oy,terrain_map,underground)
+        # Ground-level effects (no depth sort needed)
         for f in flames:    f.draw(screen,ox,oy)
-        for r in rings:     r.draw(screen,ox,oy)      # rings behind enemies
-        for e in enemies:   e.draw(screen,ox,oy,sprites)
-        for b in bullets:   b.draw(screen,ox,oy)
+        for r in rings:     r.draw(screen,ox,oy)
+        # Depth-sort all entities by (x+y) for correct isometric occlusion
+        depth=[]
+        for c in chests:    depth.append((c.x+c.y,'chest',c))
+        for g in gems:      depth.append((g.x+g.y,'gem',g))
+        for e in enemies:   depth.append((e.x+e.y,'enemy',e))
+        for b in bullets:   depth.append((b.x+b.y,'bullet',b))
+        for p in particles: depth.append((p.x+p.y,'part',p))
+        for l in ladders:   depth.append((l.x+l.y,'ladder',l))
+        depth.append((player.x+player.y,'player',player))
+        depth.sort(key=lambda i:i[0])
+        for _,etype,ent in depth:
+            if etype=='enemy': ent.draw(screen,ox,oy,sprites)
+            else:              ent.draw(screen,ox,oy)
         for bl in bolts:    bl.draw(screen,ox,oy)
-        for p in particles: p.draw(screen,ox,oy)
-        player.draw(screen,ox,oy)
         for ft in floats:   ft.draw(screen,ox,oy)
         draw_hud(screen,player,level,xp,xp_next,elapsed,kills,boss_warn)
+        # Terrain HUD
+        if state=="play":
+            if terrain_notify>0:
+                lbl=TERRAIN_LABELS.get(cur_terrain,"")
+                if lbl:
+                    col=TERRAIN_HUD_COLS.get(cur_terrain,WHITE)
+                    ts=font_small.render(f"[ {lbl} ]",True,col)
+                    ts.set_alpha(min(255,int(255*terrain_notify/2.0)))
+                    screen.blit(ts,(W//2-ts.get_width()//2,H-85))
+            if underground:
+                us=font_med.render("─ UNDERGROUND ─",True,(140,80,255))
+                screen.blit(us,(W//2-us.get_width()//2,18))
+                if ladders:
+                    hs=font_small.render("Find the green LADDER to return!",True,(80,220,80))
+                    screen.blit(hs,(W//2-hs.get_width()//2,58))
+                    # Arrow pointing to ladder
+                    l=ladders[0]
+                    lsx,lsy=iso_pos(l.x,l.y,8,ox,oy)
+                    adx=lsx-W//2; ady=lsy-H//2
+                    ad=math.hypot(adx,ady)
+                    if ad>0:
+                        ndx2=adx/ad; ndy2=ady/ad
+                        margin=55
+                        ts=[]
+                        if ndx2>0:  ts.append((W-margin-W//2)/ndx2)
+                        elif ndx2<0:ts.append((margin-W//2)/ndx2)
+                        if ndy2>0:  ts.append((H-margin-H//2)/ndy2)
+                        elif ndy2<0:ts.append((margin-H//2)/ndy2)
+                        tval=min(ts)
+                        ax=int(W//2+ndx2*tval); ay=int(H//2+ndy2*tval)
+                        ang=math.atan2(ndy2,ndx2)
+                        tip=(ax,ay)
+                        al=(int(ax-math.cos(ang-2.5)*22),int(ay-math.sin(ang-2.5)*22))
+                        ar=(int(ax-math.cos(ang+2.5)*22),int(ay-math.sin(ang+2.5)*22))
+                        pygame.draw.polygon(screen,(60,240,80),[tip,al,ar])
+                        pygame.draw.polygon(screen,(0,140,30),[tip,al,ar],2)
+                        wd=int(math.hypot(l.x-player.x,l.y-player.y))
+                        ds=font_tiny.render(f"{wd}m",True,(60,240,80))
+                        screen.blit(ds,(ax-ds.get_width()//2,ay-ds.get_height()-6))
         if state=="levelup":  levelup_rects=levelup_screen(screen,levelup_opts)
         if state=="gameover": game_over_screen(screen,elapsed,kills,victory)
         pygame.display.flip()
