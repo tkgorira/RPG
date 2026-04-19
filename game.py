@@ -51,12 +51,12 @@ TERRAIN_COLS = {
 }
 
 TERRAIN_LABELS = {
-    TERRAIN_GRASS:    "Grassland",
-    TERRAIN_MAGMA:    "MAGMA  -HP / Enemy spawn!",
-    TERRAIN_ICE:      "Ice  Slippery!",
-    TERRAIN_SWAMP:    "Swamp  Slowed",
-    TERRAIN_VALLEY:   "Valley  FALLING...",
-    TERRAIN_MOUNTAIN: "Mountain  Blocked",
+    TERRAIN_GRASS:    "草原",
+    TERRAIN_MAGMA:    "マグマ  HP減少 / 敵増加！",
+    TERRAIN_ICE:      "氷地帯  滑る！",
+    TERRAIN_SWAMP:    "沼地  速度低下",
+    TERRAIN_VALLEY:   "谷  落下中...",
+    TERRAIN_MOUNTAIN: "山岳  通行不可",
 }
 
 TERRAIN_HUD_COLS = {
@@ -109,10 +109,19 @@ NEON_R   = (215, 15,  50)   # blood red
 NEON_B   = (0,  180, 255)   # electric blue
 NEON_Y   = (255,185,   0)   # amber gold
 
-font_large = pygame.font.SysFont("consolas", 64, bold=True)
-font_med   = pygame.font.SysFont("consolas", 32)
-font_small = pygame.font.SysFont("consolas", 20)
-font_tiny  = pygame.font.SysFont("consolas", 16)
+# ── Global volume state ──────────────────────
+_vol_bgm = 0.55   # 0.0 – 1.0
+_vol_sfx = 0.80
+
+# Kenney voxel tile images, loaded by build_sprites()
+_TERRAIN_TILES: dict = {}   # terrain_id → scaled pygame.Surface
+_AXE_IMG: pygame.Surface | None = None    # ax_transparent.png, loaded by build_sprites()
+_KYONSI_IMG: pygame.Surface | None = None # kyonsi_t.png, loaded by build_sprites()
+
+font_large = pygame.font.SysFont("meiryo", 52, bold=True)
+font_med   = pygame.font.SysFont("meiryo", 28)
+font_small = pygame.font.SysFont("meiryo", 18)
+font_tiny  = pygame.font.SysFont("meiryo", 14)
 
 
 def dist(a, b):
@@ -571,15 +580,15 @@ def _draw_virus_dengue(size=38):
 # Virus pool: unlocks over time
 VIRUS_STAGES=[
     {"time":0,   "key":"virus_corona",    "name":"SARS-CoV-2",    "hp":1.0,"spd":1.0,"dmg":1.0,"r":14},
-    {"time":80,  "key":"virus_influenza", "name":"Influenza",      "hp":0.85,"spd":1.25,"dmg":0.9,"r":13},
-    {"time":160, "key":"virus_hiv",       "name":"HIV",            "hp":1.3,"spd":0.8,"dmg":1.5,"r":13},
-    {"time":240, "key":"virus_ebola",     "name":"Ebola",          "hp":1.5,"spd":1.1,"dmg":1.8,"r":14},
-    {"time":320, "key":"virus_rabies",    "name":"Rabies",         "hp":1.1,"spd":1.5,"dmg":1.3,"r":12},
+    {"time":80,  "key":"virus_influenza", "name":"インフルエンザ",  "hp":0.85,"spd":1.25,"dmg":0.9,"r":13},
+    {"time":160, "key":"virus_hiv",       "name":"HIV",             "hp":1.3,"spd":0.8,"dmg":1.5,"r":13},
+    {"time":240, "key":"virus_ebola",     "name":"エボラ",          "hp":1.5,"spd":1.1,"dmg":1.8,"r":14},
+    {"time":320, "key":"virus_rabies",    "name":"狂犬病",          "hp":1.1,"spd":1.5,"dmg":1.3,"r":12},
     {"time":400, "key":"virus_plague",    "name":"ペスト菌",        "hp":1.4,"spd":1.0,"dmg":1.6,"r":11},
-    {"time":460, "key":"virus_measles",   "name":"Measles",        "hp":0.9,"spd":1.3,"dmg":1.0,"r":13},
-    {"time":510, "key":"virus_dengue",    "name":"Dengue",         "hp":1.1,"spd":1.2,"dmg":1.2,"r":13},
-    {"time":555, "key":"virus_smallpox",  "name":"Smallpox",       "hp":1.8,"spd":0.7,"dmg":2.0,"r":14},
-    {"time":580, "key":"virus_phage",     "name":"Bacteriophage",  "hp":0.7,"spd":1.8,"dmg":0.8,"r":13},
+    {"time":460, "key":"virus_measles",   "name":"麻疹",            "hp":0.9,"spd":1.3,"dmg":1.0,"r":13},
+    {"time":510, "key":"virus_dengue",    "name":"デング熱",        "hp":1.1,"spd":1.2,"dmg":1.2,"r":13},
+    {"time":555, "key":"virus_smallpox",  "name":"天然痘",          "hp":1.8,"spd":0.7,"dmg":2.0,"r":14},
+    {"time":580, "key":"virus_phage",     "name":"バクテリオファージ","hp":0.7,"spd":1.8,"dmg":0.8,"r":13},
 ]
 
 def _draw_plague_doctor(size=64):
@@ -776,6 +785,22 @@ def build_sprites():
     def _pc(fname, size, fallback_fn):
         return _load_png(fname, size) or fallback_fn(size)
 
+    def _load_big_png(fname, target_h, crop_w):
+        """大きなPNGを target_h の高さにスケールし、中央 crop_w px に切り抜く。"""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), fname)
+        if not os.path.exists(path): return None
+        try:
+            img = pygame.image.load(path).convert_alpha()
+            ow, oh = img.get_size()
+            tw = int(ow * target_h / oh)
+            img = pygame.transform.smoothscale(img, (tw, target_h))
+            cx  = tw // 2
+            out = pygame.Surface((crop_w, target_h), pygame.SRCALPHA)
+            out.blit(img, (-(cx - crop_w//2), 0))
+            return out
+        except Exception:
+            return None
+
     raw = {
         "knight":         _pc("knight.png",        64, _draw_knight),
         "mage":           _pc("mage.png",           64, _draw_mage),
@@ -783,6 +808,7 @@ def build_sprites():
         "plague_doctor":  _pc("plague_doctor.png",  64, _draw_plague_doctor),
         "lightning_mage": _pc("lightning_mage.png", 64, _draw_lightning_mage),
         "valley_wraith":  _pc("valley_wraith.png",  64, _draw_valley_wraith),
+        "necromancer":    _load_big_png("necro1_t.png", 80, 72) or _draw_mage(64),
         "enemy_normal":   _draw_enemy_normal(40),
         "enemy_fast":     _draw_enemy_fast(32),
         "virus_corona":   _draw_enemy_normal(40),
@@ -796,13 +822,88 @@ def build_sprites():
         "virus_smallpox": _draw_virus_smallpox(44),
         "virus_phage":    _draw_virus_phage(72),
         "boss":           _draw_boss_phage(108),
+        "godzilla":       _draw_godzilla(160),
     }
+    # ax_transparent.png を読み込み
+    global _AXE_IMG
+    _ax_path = os.path.join(os.path.dirname(__file__), "ax_transparent.png")
+    if os.path.exists(_ax_path):
+        try:
+            _ax = pygame.image.load(_ax_path).convert_alpha()
+            _AXE_IMG = pygame.transform.smoothscale(_ax, (56, 60))
+        except Exception:
+            pass
+
+    # kyonsi_t.png (ミニオンスプライト)
+    global _KYONSI_IMG
+    _ks_path = os.path.join(os.path.dirname(__file__), "kyonsi_t.png")
+    if os.path.exists(_ks_path):
+        try:
+            _ks = pygame.image.load(_ks_path).convert_alpha()
+            kw, kh = _ks.get_size()
+            th = 50; tw = int(kw * th / kh)
+            _ks = pygame.transform.smoothscale(_ks, (tw, th))
+            cx = tw // 2; cw = 46
+            out = pygame.Surface((cw, th), pygame.SRCALPHA)
+            out.blit(_ks, (-(cx - cw//2), 0))
+            _KYONSI_IMG = out
+        except Exception:
+            pass
+
+    # gozila_transparent.png があればリアル画像で上書き
+    _gz_path = os.path.join(os.path.dirname(__file__), "gozila_transparent.png")
+    if os.path.exists(_gz_path):
+        try:
+            _gz_img = pygame.image.load(_gz_path).convert_alpha()
+            # ゲームサイズに合わせてスケール (160x160)
+            _gz_img = pygame.transform.smoothscale(_gz_img, (480, 480))
+            raw["godzilla"] = _gz_img
+        except Exception:
+            pass  # ロード失敗時はプロシージャル版を使う
     # 敵・ボス系スプライトに3Dシェーディングを事前適用
     _enemy_keys = {k for k in raw if k not in
-                   ("knight","mage","rogue","plague_doctor","lightning_mage","valley_wraith")}
+                   ("knight","mage","rogue","plague_doctor","lightning_mage","valley_wraith",
+                    "godzilla")}   # godzilla は写真調なのでシェーディング不要
     for k in _enemy_keys:
         if raw[k] is not None:
             raw[k] = apply_3d_shading(raw[k])
+
+    # ── SBS realistic terrain tiles (flat isometric diamonds 256×144) ────────
+    _sbs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "tilesets", "sbs_tiles")
+    # iso diamond: width=104px, height=52px (TILE_STEP*2*ISO_SX/SY)
+    _TW = 104; _TH = 52
+    _tile_files = {
+        TERRAIN_GRASS:  "forest_00.png",  # 緑草地
+        TERRAIN_ICE:    "t2_00.png",      # 灰石（青味tint）
+        TERRAIN_SWAMP:  "t1_00.png",      # 茶色泥・沼
+        # TERRAIN_MAGMA=1: procedural glow kept (no red/lava tile in pack)
+        TERRAIN_VALLEY: "t3_00.png",      # 暗灰岩
+    }
+    global _TERRAIN_TILES
+    import numpy as _np
+    for tid, fname in _tile_files.items():
+        path = os.path.join(_sbs_dir, fname)
+        if os.path.exists(path):
+            try:
+                img = pygame.image.load(path).convert_alpha()
+                img = pygame.transform.smoothscale(img, (_TW, _TH))
+                # ICE: add blue tint
+                if tid == TERRAIN_ICE:
+                    tint = pygame.Surface((_TW, _TH), pygame.SRCALPHA)
+                    tint.fill((60, 120, 220, 60))
+                    img.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+                # Clip to diamond shape: zero alpha outside diamond boundary
+                # surfarray is (x, y) order; diamond: |x/W*2-1| + |y/H*2-1| <= 1
+                arr = pygame.surfarray.pixels_alpha(img)
+                xi = (_np.arange(_TW).reshape(_TW, 1) / _TW * 2 - 1)
+                yi = (_np.arange(_TH).reshape(1, _TH) / _TH * 2 - 1)
+                arr[_np.abs(xi) + _np.abs(yi) > 1.0] = 0
+                del arr  # unlock surface
+                _TERRAIN_TILES[tid] = img
+            except Exception:
+                pass
+
     return raw
 
 
@@ -879,28 +980,95 @@ def _bgm_buf(rate=44100):
 class SoundManager:
     def __init__(self):
         self.muted=False; self.sfx={}; self._build()
+
     def _build(self):
-        self.sfx["shoot"]    =pygame.mixer.Sound(buffer=_sine_buf(700,0.05,0.18))
-        self.sfx["axe"]      =pygame.mixer.Sound(buffer=_sweep_buf(500,250,0.12,0.25))
-        self.sfx["lightning"]=pygame.mixer.Sound(buffer=_sweep_buf(1400,600,0.08,0.28))
-        self.sfx["flame"]    =pygame.mixer.Sound(buffer=_noise_buf(0.18,0.22))
-        self.sfx["hit"]      =pygame.mixer.Sound(buffer=_sine_buf(380,0.07,0.2))
-        self.sfx["kill"]     =pygame.mixer.Sound(buffer=_sweep_buf(500,150,0.14,0.25))
-        self.sfx["levelup"]  =pygame.mixer.Sound(buffer=_chord_buf([523,659,784,1046],0.45,0.22))
-        self.sfx["boss"]     =pygame.mixer.Sound(buffer=_chord_buf([60,80,55],0.7,0.3))
-        self.sfx["chest"]    =pygame.mixer.Sound(buffer=_chord_buf([523,659,784],0.3,0.2))
-        self.sfx["hurt"]     =pygame.mixer.Sound(buffer=_sweep_buf(300,150,0.09,0.35))
-        self.sfx["cross"]    =pygame.mixer.Sound(buffer=_chord_buf([400,600],0.1,0.2))
-        bgm=pygame.mixer.Sound(buffer=_bgm_buf()); bgm.set_volume(0.4); self.sfx["bgm"]=bgm
-    def play(self,name):
-        if not self.muted and name in self.sfx: self.sfx[name].play()
+        _base = os.path.dirname(os.path.abspath(__file__))
+
+        def _load_se(path, fallback):
+            if os.path.exists(path) and os.path.getsize(path)>0:
+                try: return pygame.mixer.Sound(path)
+                except Exception: pass
+            return fallback
+
+        self.sfx["shoot"]    = pygame.mixer.Sound(buffer=_sine_buf(700,0.05,0.18))
+        self.sfx["axe"]      = pygame.mixer.Sound(buffer=_sweep_buf(500,250,0.12,0.25))
+        self.sfx["hit"]      = pygame.mixer.Sound(buffer=_sine_buf(380,0.07,0.2))
+        self.sfx["kill"]     = pygame.mixer.Sound(buffer=_sweep_buf(500,150,0.14,0.25))
+        self.sfx["levelup"]  = pygame.mixer.Sound(buffer=_chord_buf([523,659,784,1046],0.45,0.22))
+        self.sfx["boss"]     = pygame.mixer.Sound(buffer=_chord_buf([60,80,55],0.7,0.3))
+        self.sfx["chest"]    = pygame.mixer.Sound(buffer=_chord_buf([523,659,784],0.3,0.2))
+        self.sfx["hurt"]     = pygame.mixer.Sound(buffer=_sweep_buf(300,150,0.09,0.35))
+        self.sfx["cross"]    = pygame.mixer.Sound(buffer=_chord_buf([400,600],0.1,0.2))
+        # 外部SE: 火炎魔法 / 雷魔法
+        self.sfx["flame"]    = _load_se(os.path.join(_base,"se_flame.wav"),
+                                        pygame.mixer.Sound(buffer=_noise_buf(0.18,0.22)))
+        _light = _load_se(os.path.join(_base,"se_lightning.wav"),
+                          pygame.mixer.Sound(buffer=_sweep_buf(1400,600,0.08,0.28)))
+        self.sfx["lightning"] = _light
+        self.sfx["scatter"]   = _light   # 同じ雷SE
+        self.sfx["necro_summon"] = _load_se(os.path.join(_base,"se_necro.wav"),
+                                            pygame.mixer.Sound(buffer=_chord_buf([200,280,160],0.4,0.3)))
+        bgm = pygame.mixer.Sound(buffer=_bgm_buf())
+        bgm.set_volume(0.4); self.sfx["bgm"] = bgm
+        # 外部BGMファイル
+        self._bgm_file = None
+        for _ext in ("ogg","mp3","wav"):
+            _p = os.path.join(_base, f"bgm.{_ext}")
+            if os.path.exists(_p) and os.path.getsize(_p)>0:
+                self._bgm_file = _p; break
+        self._apply_sfx_vol()
+
+    def _apply_sfx_vol(self):
+        for k, s in self.sfx.items():
+            if k != "bgm":
+                s.set_volume(_vol_sfx)
+
+    def set_sfx_volume(self, v):
+        global _vol_sfx
+        _vol_sfx = max(0.0, min(1.0, v))
+        self._apply_sfx_vol()
+
+    def set_bgm_volume(self, v):
+        global _vol_bgm
+        _vol_bgm = max(0.0, min(1.0, v))
+        pygame.mixer.music.set_volume(_vol_bgm)
+        self.sfx["bgm"].set_volume(_vol_bgm * 0.4)
+
+    def play(self, name):
+        if not self.muted and name in self.sfx:
+            self.sfx[name].play()
+
     def start_bgm(self):
-        if not self.muted: self.sfx["bgm"].play(loops=-1)
-    def stop_bgm(self): self.sfx["bgm"].stop()
+        if self.muted: return
+        if self._bgm_file:
+            try:
+                pygame.mixer.music.load(self._bgm_file)
+                pygame.mixer.music.set_volume(_vol_bgm)
+                pygame.mixer.music.play(loops=-1)
+                return
+            except Exception: pass
+        self.sfx["bgm"].play(loops=-1)
+
+    def stop_bgm(self):
+        pygame.mixer.music.stop()
+        self.sfx["bgm"].stop()
+
     def toggle_mute(self):
-        self.muted=not self.muted
-        if self.muted: pygame.mixer.pause()
-        else: pygame.mixer.unpause(); self.sfx["bgm"].play(loops=-1)
+        self.muted = not self.muted
+        if self.muted:
+            pygame.mixer.music.pause()
+            pygame.mixer.pause()
+        else:
+            if self._bgm_file:
+                try:
+                    if not pygame.mixer.music.get_busy():
+                        pygame.mixer.music.play(loops=-1)
+                    else:
+                        pygame.mixer.music.unpause()
+                    return
+                except Exception: pass
+            pygame.mixer.unpause()
+            self.sfx["bgm"].play(loops=-1)
 
 
 # ─────────────────────────────────────────────
@@ -1020,13 +1188,13 @@ class Bullet:
 class AxeBullet(Bullet):
     """Rotating axe blade projectile."""
     def __init__(self,x,y,dx,dy,speed,damage):
-        super().__init__(x,y,dx,dy,speed,damage,radius=11,
-                         color=ORANGE,lifetime=0.75,pierce=99,style="axe")
-        self.angle=math.atan2(dy,dx); self.spin=11.0
+        super().__init__(x,y,dx,dy,speed,damage,radius=28,
+                         color=ORANGE,lifetime=0.9,pierce=99,style="axe")
+        self.angle=math.atan2(dy,dx); self.spin=9.0
 
     def update(self,dt):
         self.trail.append((self.x,self.y))
-        if len(self.trail)>6: self.trail=self.trail[-6:]
+        if len(self.trail)>8: self.trail=self.trail[-8:]
         self.x+=self.dx*self.speed*dt; self.y+=self.dy*self.speed*dt
         self.angle+=self.spin*dt; self.life-=dt
         if self.life<=0: self.alive=False
@@ -1035,29 +1203,28 @@ class AxeBullet(Bullet):
         # Orange trail
         n=len(self.trail)
         for i,(tx,ty) in enumerate(self.trail):
-            ratio=(i+1)/max(n,1); tr=max(1,int(self.radius*ratio*0.55))
+            ratio=(i+1)/max(n,1); tr=max(1,int(self.radius*ratio*0.4))
             tsx,tsy=iso_pos(tx,ty,26,ox,oy)
             ts=pygame.Surface((tr*2+2,tr*2+2),pygame.SRCALPHA)
-            pygame.draw.circle(ts,(255,140,0,int(75*ratio)),(tr+1,tr+1),tr)
+            pygame.draw.circle(ts,(255,140,0,int(60*ratio)),(tr+1,tr+1),tr)
             surf.blit(ts,(tsx-tr-1,tsy-tr-1))
         sx,sy=iso_pos(self.x,self.y,26,ox,oy)
-        r=self.radius
-        # Axe blade: spinning diamond
-        bl=r*1.65; bw=r*0.72
-        pts=[(sx+math.cos(self.angle)*bl,       sy+math.sin(self.angle)*bl),
-             (sx+math.cos(self.angle+1.8)*bw,   sy+math.sin(self.angle+1.8)*bw),
-             (sx-math.cos(self.angle)*r*0.45,    sy-math.sin(self.angle)*r*0.45),
-             (sx+math.cos(self.angle-1.8)*bw,   sy+math.sin(self.angle-1.8)*bw)]
-        pts=[(int(x),int(y)) for x,y in pts]
-        pygame.draw.polygon(surf,ORANGE,pts)
-        pygame.draw.polygon(surf,(255,200,80),pts,2)
-        # Blade tip shine
-        tip=(int(sx+math.cos(self.angle)*bl),int(sy+math.sin(self.angle)*bl))
-        pygame.draw.circle(surf,(255,240,160),tip,3)
-        # Spin glow
-        gs_r=r+3; gsurf=pygame.Surface((gs_r*2,gs_r*2),pygame.SRCALPHA)
-        pygame.draw.circle(gsurf,(255,140,0,40),(gs_r,gs_r),gs_r)
-        surf.blit(gsurf,(sx-gs_r,sy-gs_r))
+        if _AXE_IMG is not None:
+            # 画像を回転して描画
+            rotated = pygame.transform.rotate(_AXE_IMG, -math.degrees(self.angle)-45)
+            rw, rh = rotated.get_size()
+            surf.blit(rotated, (sx - rw//2, sy - rh//2))
+        else:
+            # フォールバック: プロシージャル斧
+            r=self.radius
+            bl=r*1.65; bw=r*0.72
+            pts=[(sx+math.cos(self.angle)*bl,       sy+math.sin(self.angle)*bl),
+                 (sx+math.cos(self.angle+1.8)*bw,   sy+math.sin(self.angle+1.8)*bw),
+                 (sx-math.cos(self.angle)*r*0.45,    sy-math.sin(self.angle)*r*0.45),
+                 (sx+math.cos(self.angle-1.8)*bw,   sy+math.sin(self.angle-1.8)*bw)]
+            pts=[(int(x),int(y)) for x,y in pts]
+            pygame.draw.polygon(surf,ORANGE,pts)
+            pygame.draw.polygon(surf,(255,200,80),pts,2)
 
 
 # ─────────────────────────────────────────────
@@ -1273,13 +1440,70 @@ class Gem:
             surf.blit(rs, (sx - ring_r, sy - ring_r))
 
 CHEST_REWARDS=[
-    {"name":"HP Restore","desc":"+60 HP",           "key":"hp"},
-    {"name":"Wand Lv+",  "desc":"Magic bolt enhanced","key":"wand"},
-    {"name":"Axe",       "desc":"Axe enhanced",       "key":"axe"},
-    {"name":"Lightning", "desc":"Lightning enhanced", "key":"lightning"},
-    {"name":"Flame",     "desc":"Flame enhanced",     "key":"flame"},
-    {"name":"XP Burst",  "desc":"+50 XP",             "key":"xp"},
+    {"name":"HP回復",    "desc":"+60 HP",       "key":"hp"},
+    {"name":"魔杖Lv+",   "desc":"魔法弾強化",   "key":"wand"},
+    {"name":"斧",        "desc":"斧強化",       "key":"axe"},
+    {"name":"雷",        "desc":"雷強化",       "key":"lightning"},
+    {"name":"炎",        "desc":"炎強化",       "key":"flame"},
+    {"name":"XP爆発",    "desc":"+50 XP",       "key":"xp"},
 ]
+
+# ─────────────────────────────────────────────
+# SP Orb (Special Power drop from enemies)
+# ─────────────────────────────────────────────
+class SPOrb:
+    ATTRACT_RANGE = 160
+    ATTRACT_ACCEL = 1100
+    MAX_SPEED     = 520
+
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+        self.radius = 8
+        self.alive = True
+        self._bob   = random.uniform(0, math.pi*2)
+        self._vx = self._vy = 0.0
+        self._attracting = False
+
+    def update(self, dt, px, py):
+        self._bob += dt * 3.0
+        d = dist((self.x, self.y), (px, py))
+        if d < self.ATTRACT_RANGE and d > 1:
+            self._attracting = True
+            strength = self.ATTRACT_ACCEL * (1.0 + (self.ATTRACT_RANGE - d) / self.ATTRACT_RANGE * 2.0)
+            nx, ny = norm(px - self.x, py - self.y)
+            self._vx += nx * strength * dt
+            self._vy += ny * strength * dt
+            spd = math.hypot(self._vx, self._vy)
+            if spd > self.MAX_SPEED:
+                self._vx = self._vx / spd * self.MAX_SPEED
+                self._vy = self._vy / spd * self.MAX_SPEED
+        else:
+            self._attracting = False
+            self._vx *= max(0.0, 1.0 - dt * 4)
+            self._vy *= max(0.0, 1.0 - dt * 4)
+        self.x += self._vx * dt
+        self.y += self._vy * dt
+
+    def draw(self, surf, ox, oy):
+        r = self.radius
+        hover = math.sin(self._bob) * (3 if not self._attracting else 1)
+        sx, sy = iso_pos(self.x, self.y, int(hover), ox, oy)
+        # Glow aura
+        glow_r = r + 6 + int(abs(math.sin(self._bob*2))*4)
+        gs = pygame.Surface((glow_r*2, glow_r*2), pygame.SRCALPHA)
+        pygame.draw.circle(gs, (255, 200, 0, 50), (glow_r, glow_r), glow_r)
+        surf.blit(gs, (sx-glow_r, sy-glow_r))
+        # Dark rim
+        pygame.draw.circle(surf, (120, 80, 0), (sx, sy), r+2)
+        # Body: gold-yellow
+        pygame.draw.circle(surf, (255, 180, 0), (sx, sy), r)
+        # Inner bright
+        pygame.draw.circle(surf, (255, 240, 120), (sx-r//3, sy-r//3), max(r//3, 2))
+        # Specular
+        pygame.draw.circle(surf, WHITE, (sx-r//3+1, sy-r//3+1), max(r//5, 1))
+        # "SP" label
+        sp_s = font_tiny.render("SP", True, (80, 40, 0))
+        surf.blit(sp_s, (sx - sp_s.get_width()//2, sy - sp_s.get_height()//2))
 
 class Chest:
     def __init__(self,x,y):
@@ -1381,7 +1605,7 @@ class Ladder:
 
         # ── ラベル ────────────────────────────────────────────
         lc=(int(200+55*pulse),255,int(180+70*pulse))
-        lbl=font_small.render("▲ ASCEND",True,lc)
+        lbl=font_small.render("▲ 地上へ",True,lc)
         surf.blit(lbl,(sx-lbl.get_width()//2,top_y-22+int(bv)))
 
 class FloatText:
@@ -1511,30 +1735,403 @@ class Boss(Enemy):
 
 
 # ─────────────────────────────────────────────
+# Godzilla – final boss at 90 sec remaining
+# ─────────────────────────────────────────────
+def _draw_godzilla(size=160):
+    s = pygame.Surface((size, size), pygame.SRCALPHA)
+    cx = size // 2
+
+    # Ground shadow
+    pygame.draw.ellipse(s, (0,0,0,70), (cx-52, size-22, 104, 26))
+
+    # Tail (behind body)
+    tail_pts = [(cx+30,size-28),(cx+52,size-50),(cx+68,size-74),(cx+58,size-90),
+                (cx+40,size-78),(cx+26,size-55),(cx+20,size-30)]
+    pygame.draw.polygon(s, (28,52,18), tail_pts)
+    pygame.draw.polygon(s, (20,38,12), tail_pts, 2)
+
+    # Hind legs
+    for side,lx in ((-1, cx-28),(1, cx+14)):
+        leg = [(lx,size-28),(lx+side*8,size-10),(lx+side*20,size-8),(lx+side*22,size-28)]
+        pygame.draw.polygon(s, (22,45,14), leg)
+        # claws
+        for ci in range(3):
+            cx2 = lx+side*(10+ci*4); cy2 = size-8
+            pygame.draw.ellipse(s, (80,70,40), (cx2-3,cy2-2,6,6))
+
+    # Body – massive barrel torso
+    body_col   = (34,62,22)
+    belly_col  = (60,90,38)
+    pygame.draw.ellipse(s, body_col,  (cx-40, size-100, 80, 80))
+    pygame.draw.ellipse(s, belly_col, (cx-20, size-90, 38, 58))   # lighter belly
+
+    # Dorsal spines (back plates)
+    spine_xs = [-22,-12,0,12,22]
+    spine_hs  = [ 32, 44,52,42,30]
+    for sx2,sh in zip(spine_xs, spine_hs):
+        spine_pts = [(cx+sx2-6, size-98),
+                     (cx+sx2,   size-98-sh),
+                     (cx+sx2+6, size-98)]
+        pygame.draw.polygon(s, (14,110,80), spine_pts)
+        pygame.draw.polygon(s, (0,160,110), spine_pts, 1)
+        # glow on spines
+        glow_s = pygame.Surface((14,sh), pygame.SRCALPHA)
+        for gi in range(sh):
+            a2 = int(120*(1-gi/sh)**1.5)
+            pygame.draw.line(glow_s, (0,220,150,a2), (3,gi),(10,gi))
+        s.blit(glow_s, (cx+sx2-6, size-98-sh))
+
+    # Arms
+    for side,ax in ((-1,cx-38),(1,cx+24)):
+        arm_pts = [(ax, size-80),(ax+side*18,size-64),(ax+side*22,size-50),
+                   (ax+side*14,size-44),(ax+side*2,size-58),(ax-side*4,size-72)]
+        pygame.draw.polygon(s, (28,52,18), arm_pts)
+        # claws
+        for ci in range(3):
+            cxa = ax+side*(12+ci*3); cya = size-44
+            pygame.draw.ellipse(s, (80,70,40), (cxa-3,cya-2,6,8))
+
+    # Neck
+    pygame.draw.polygon(s, (34,62,22), [(cx-16,size-98),(cx+16,size-98),
+                                         (cx+12,size-118),(cx-12,size-118)])
+
+    # Head
+    pygame.draw.ellipse(s, (34,62,22), (cx-22, size-136, 44, 38))
+    # Snout / jaw
+    pygame.draw.ellipse(s, (28,52,18), (cx-18, size-118, 36, 22))
+    # Lower jaw open
+    pygame.draw.ellipse(s, (18,38,10), (cx-14, size-110, 28, 16))
+    pygame.draw.ellipse(s, (180,40,30),(cx-12, size-108, 24, 10))  # mouth red inside
+    # Teeth
+    for ti in range(5):
+        tx2 = cx-10+ti*5
+        pygame.draw.polygon(s, WHITE, [(tx2,size-108),(tx2+2,size-100),(tx2+4,size-108)])
+    # Eyes (glowing orange)
+    pygame.draw.circle(s, (20,40,12),   (cx-8, size-130), 7)
+    pygame.draw.circle(s, (255,160,0),  (cx-8, size-130), 5)
+    pygame.draw.circle(s, (255,220,80), (cx-8, size-130), 2)
+    pygame.draw.circle(s, WHITE,        (cx-6, size-132), 1)
+    # Nostrils
+    pygame.draw.circle(s, (14,30,8), (cx-6,  size-122), 2)
+    pygame.draw.circle(s, (14,30,8), (cx+2,  size-122), 2)
+    # Brow ridges
+    pygame.draw.arc(s, (20,40,12), (cx-14,size-136,12,8), 0.2, math.pi-0.2, 2)
+
+    # Outline glow (nuclear blue-green)
+    gl = pygame.Surface((size,size), pygame.SRCALPHA)
+    pygame.draw.ellipse(gl, (0,220,120,18), (cx-46,size-104,92,88))
+    s.blit(gl,(0,0))
+
+    return apply_3d_shading(s)
+
+
+class GodzillaBeam:
+    """ゴジラの放射熱線。プレイヤーにも敵にも当たる。"""
+    DAMAGE_PLAYER = 60   # per second
+    DAMAGE_ENEMY  = 800  # per second
+    WIDTH         = 48   # ビーム幅 (world units)
+    SPEED         = 0.9  # rad/sec の旋回速度
+    RANGE         = 1600 # ビームの射程
+
+    def __init__(self, gx, gy, target_angle):
+        self.gx = gx; self.gy = gy
+        self.angle = target_angle     # current beam angle (radians)
+        self.alive = True
+        self.duration = 3.5           # ビーム持続時間
+        self.timer = self.duration
+        self.tick_cd = 0.0            # damage tick
+
+    def update(self, dt, px, py, enemies, player, floats, rings, particles):
+        self.timer -= dt
+        if self.timer <= 0:
+            self.alive = False
+            return
+        # ゆっくりプレイヤー方向に旋回
+        target = math.atan2(py - self.gy, px - self.gx)
+        diff = (target - self.angle + math.pi) % (2*math.pi) - math.pi
+        self.angle += max(-self.SPEED*dt, min(self.SPEED*dt, diff))
+        # ビーム軸ベクトル
+        bx = math.cos(self.angle); by = math.sin(self.angle)
+        self.tick_cd -= dt
+
+        def _in_beam(ex, ey):
+            # 点がビームの扇型ライン内にあるか
+            dx2 = ex - self.gx; dy2 = ey - self.gy
+            along = dx2*bx + dy2*by
+            if along < 0 or along > self.RANGE: return False
+            perp = abs(dx2*by - dy2*bx)
+            return perp < self.WIDTH * 0.5 + 12
+
+        if self.tick_cd <= 0:
+            self.tick_cd = 0.1  # 0.1秒ごとにダメージ
+            # プレイヤーへのダメージ
+            if _in_beam(player.x, player.y) and player.alive:
+                player.hp -= self.DAMAGE_PLAYER * 0.1
+                player.hurt_flash = 0.18
+                rings.append(RingEffect(player.x, player.y, (0,220,120), 30, 2, 0.12))
+            # 敵へのダメージ
+            for e in enemies:
+                if not isinstance(e, GodzillaEnemy) and _in_beam(e.x, e.y):
+                    e.hp -= self.DAMAGE_ENEMY * 0.1
+                    e.hit_flash = 0.1
+                    particles.append(Particle(e.x, e.y, (0,255,150)))
+
+    def draw(self, surf, ox, oy):
+        t_ms = pygame.time.get_ticks()
+        fade = min(1.0, self.timer / 0.4)   # フェードアウト
+        # ビームの起点（ゴジラの口）
+        bx = math.cos(self.angle); by2 = math.sin(self.angle)
+        # 起点から射程まで複数の多角形で描画
+        STEPS = 20
+        step_r = self.RANGE / STEPS
+        w_start = self.WIDTH * 1.6
+        w_end   = self.WIDTH * 0.3
+
+        for i in range(STEPS):
+            t0 = i / STEPS; t1 = (i+1) / STEPS
+            r0 = step_r * i;  r1 = step_r * (i+1)
+            w0 = w_start*(1-t0)+w_end*t0
+            w1 = w_start*(1-t1)+w_end*t1
+            # 法線方向
+            nx2 = -by2; ny2 = bx
+            # 4頂点 (world) → screen
+            pts_w = [
+                (self.gx+bx*r0+nx2*w0*0.5, self.gy+by2*r0+ny2*w0*0.5),
+                (self.gx+bx*r1+nx2*w1*0.5, self.gy+by2*r1+ny2*w1*0.5),
+                (self.gx+bx*r1-nx2*w1*0.5, self.gy+by2*r1-ny2*w1*0.5),
+                (self.gx+bx*r0-nx2*w0*0.5, self.gy+by2*r0-ny2*w0*0.5),
+            ]
+            pts_s = [iso_pos(wx, wy, 30, ox, oy) for wx, wy in pts_w]
+            # 外層：薄い青緑
+            pulse = abs(math.sin(t_ms*0.008 + i*0.3))
+            a_outer = int(60 * fade * (1-t0*0.6))
+            seg = pygame.Surface((W, H), pygame.SRCALPHA)
+            pygame.draw.polygon(seg, (0, 240, 140, a_outer), pts_s)
+            surf.blit(seg, (0,0))
+        # 中心核心：明るい白緑ライン
+        tip_s  = iso_pos(self.gx + bx*20,  self.gy + by2*20,  35, ox, oy)
+        end_s  = iso_pos(self.gx + bx*self.RANGE*0.9, self.gy + by2*self.RANGE*0.9, 30, ox, oy)
+        core_a = int(220 * fade)
+        core_s = pygame.Surface((W, H), pygame.SRCALPHA)
+        w_core = max(3, int(8 * fade * (1+0.3*math.sin(t_ms*0.015))))
+        pygame.draw.line(core_s, (160, 255, 200, core_a), tip_s, end_s, w_core)
+        pygame.draw.line(core_s, (255, 255, 255, int(core_a*0.8)), tip_s, end_s, max(1, w_core//2))
+        surf.blit(core_s, (0,0))
+
+
+class GodzillaEnemy(Boss):
+    SPRITE_SIZE = 480   # 3× original 160
+
+    def __init__(self, x, y):
+        hp = 12000
+        spd = 38   # ゆっくり迫る
+        Enemy.__init__(self, x, y, hp=hp, speed=spd, damage=80, radius=270,
+                       color=(30,80,20), xp=800, sprite_key="godzilla")
+        self.level = 0; self.base_speed = spd
+        self.name = "GODZILLA"
+        # ビーム関連
+        self.beam_cd = 6.0     # 最初のビームまでの待機
+        self.beam_charging = False
+        self.beam_charge_t = 0.0
+        self.beam_angle = 0.0
+        self.active_beam = None   # GodzillaBeamインスタンス
+        # telegraph フィールド（Boss互換）
+        self.telegraph = 0.0
+        self.charging  = False
+        self.charge_time = 0.0
+        self.charge_timer = 9999
+
+    def update(self, dt, px, py, _b=None, _f=None):
+        if self.hit_flash > 0: self.hit_flash -= dt
+        # ゆっくりプレイヤーに近づく
+        dx, dy = norm(px-self.x, py-self.y)
+        self.x += dx*self.speed*dt; self.y += dy*self.speed*dt
+        # ビームチャージ
+        self.beam_cd -= dt
+        if self.beam_cd <= 0 and not self.beam_charging and self.active_beam is None:
+            self.beam_charging = True
+            self.beam_charge_t = 2.5  # チャージ溜め時間
+            self.beam_angle = math.atan2(py-self.y, px-self.x)
+        if self.beam_charging:
+            self.beam_charge_t -= dt
+            if self.beam_charge_t <= 0:
+                self.beam_charging = False
+                self.active_beam = GodzillaBeam(self.x, self.y,
+                                                math.atan2(py-self.y, px-self.x))
+                self.beam_cd = random.uniform(9.0, 13.0)
+
+    def update_beam(self, dt, px, py, enemies, player, floats, rings, particles):
+        """ビームの更新（run_gameから別途呼ぶ）"""
+        if self.active_beam:
+            self.active_beam.gx = self.x
+            self.active_beam.gy = self.y
+            self.active_beam.update(dt, px, py, enemies, player, floats, rings, particles)
+            if not self.active_beam.alive:
+                self.active_beam = None
+
+    def draw(self, surf, ox, oy, sprites):
+        hover = math.sin(pygame.time.get_ticks()*0.001+self._hphase)*10
+        draw_shadow(surf, self.x, self.y, ox, oy, self.radius, 150)
+        draw_shadow(surf, self.x, self.y+self.radius*0.4, ox, oy,
+                    int(self.radius*0.7), 70)
+        gsx, gsy = iso_pos(self.x, self.y, 0, ox, oy)
+        # ビームチャージ：目が光る演出
+        if self.beam_charging:
+            t_ms = pygame.time.get_ticks()
+            charge_r = int(self.radius * 0.5 * (1 - self.beam_charge_t/2.5))
+            pulse = abs(math.sin(t_ms*0.012))
+            cs = pygame.Surface((charge_r*4, charge_r*4), pygame.SRCALPHA)
+            pygame.draw.circle(cs, (0,255,120, int(80*pulse)), (charge_r*2,charge_r*2), charge_r*2)
+            pygame.draw.circle(cs, (200,255,160, int(140*pulse)), (charge_r*2,charge_r*2), charge_r)
+            surf.blit(cs, (gsx-charge_r*2, gsy-self.radius-charge_r*2))
+        spr = sprites.get("godzilla")
+        if spr:
+            # 480×480 表示のためスケーリング
+            if spr.get_width() != self.SPRITE_SIZE:
+                spr = pygame.transform.smoothscale(spr, (self.SPRITE_SIZE, self.SPRITE_SIZE))
+            blit_dy = gsy - spr.get_height() - int(hover)
+            blit_dx = gsx - spr.get_width()//2
+            ol = get_enemy_outline("godzilla", spr)
+            for odx, ody in ((-6,0),(6,0),(0,-6),(0,6)):
+                surf.blit(ol, (blit_dx+odx, blit_dy+ody))
+            if self.hit_flash > 0:
+                ws = spr.copy()
+                ws.fill((255,255,255,200), special_flags=pygame.BLEND_RGBA_ADD)
+                surf.blit(ws, (blit_dx, blit_dy))
+            else:
+                surf.blit(spr, (blit_dx, blit_dy))
+            bar_y = blit_dy - 20
+        else:
+            bar_y = gsy - self.radius - 20
+        # HP bar (wide)
+        bw = 300; ratio = max(0, self.hp/self.max_hp)
+        pygame.draw.rect(surf, (40,0,0),   (gsx-150, bar_y, bw, 14))
+        pygame.draw.rect(surf, (20,200,40),(gsx-150, bar_y, int(bw*ratio), 14))
+        pygame.draw.rect(surf, (0,255,90), (gsx-150, bar_y, int(bw*ratio), 5))
+        t_ms2 = pygame.time.get_ticks()
+        lbl = font_med.render("☢ ゴジラ ☢", True, (0,240,120))
+        lbl.set_alpha(int(200+abs(math.sin(t_ms2/300))*55))
+        surf.blit(lbl, (gsx-lbl.get_width()//2, bar_y-30))
+
+
+# ─────────────────────────────────────────────
 # Characters
 # ─────────────────────────────────────────────
 CHARACTERS=[
-    {"name":"Knight","desc":["High HP & defense","Starts with Axe"],
+    {"name":"ナイト",       "desc":["高HP・高防御","斧装備でスタート"],
      "color":BLUE,  "hp":200,"speed":175,"sprite":"knight",
      "weapons":{"wand":0,"axe":1,"cross":0,"garlic":0,"lightning":0,"flame":0,"plague":0},"wand_cd":0.8},
-    {"name":"Mage",  "desc":["Fast magic attack","Starts with Wand Lv2"],
+    {"name":"魔法使い",     "desc":["高速魔法攻撃","魔杖Lv2でスタート"],
      "color":PURPLE,"hp":90, "speed":230,"sprite":"mage",
      "weapons":{"wand":2,"axe":0,"cross":0,"garlic":0,"lightning":0,"flame":0,"plague":0},"wand_cd":0.38},
-    {"name":"Rogue", "desc":["Very fast & agile","Starts with Holy Cross"],
+    {"name":"ローグ",       "desc":["超高速・機敏","聖十字装備でスタート"],
      "color":ORANGE,"hp":110,"speed":290,"sprite":"rogue",
      "weapons":{"wand":0,"axe":0,"cross":1,"garlic":0,"lightning":0,"flame":0,"plague":0},"wand_cd":0.8},
-    {"name":"Plague Dr","desc":["Instant-kill aura","Enemies within 1 tile vanish"],
+    {"name":"疫病医師",     "desc":["即死オーラ","1タイル以内の敵を消滅"],
      "color":(160,0,220),"hp":150,"speed":210,"sprite":"plague_doctor",
      "weapons":{"wand":0,"axe":0,"cross":0,"garlic":0,"lightning":0,"flame":0,"plague":1,"scatter":0},"wand_cd":0.8,
      "magma_immune":True},
-    {"name":"Lightning Mage","desc":["Scatter lightning strike","Hits random targets at once"],
+    {"name":"雷魔道士",     "desc":["拡散雷撃","ランダム複数同時攻撃"],
      "color":(0,200,255),"hp":80,"speed":240,"sprite":"lightning_mage",
      "weapons":{"wand":0,"axe":0,"cross":0,"garlic":0,"lightning":0,"flame":0,"plague":0,"scatter":2},"wand_cd":0.8},
-    {"name":"Valley Wraith","desc":["Ignores valley terrain","Speed boost in the void"],
+    {"name":"谷の亡霊",     "desc":["谷地形を無視","谷でスピードUP"],
      "color":(160,0,255),"hp":130,"speed":260,"sprite":"valley_wraith",
      "weapons":{"wand":1,"axe":0,"cross":0,"garlic":0,"lightning":0,"flame":0,"plague":0,"scatter":0},"wand_cd":0.6,
      "valley_immune":True},
+    {"name":"死霊使い",     "desc":["死霊を召喚して戦う","他の武器は使えない"],
+     "color":(130,0,220),"hp":110,"speed":205,"sprite":"necromancer",
+     "weapons":{"wand":0,"axe":0,"cross":0,"garlic":0,"lightning":0,"flame":0,"plague":0,"scatter":0},
+     "wand_cd":0.8, "necro_only":True},
 ]
+
+
+# ─────────────────────────────────────────────
+# Minion (死霊使いの召喚物)
+# ─────────────────────────────────────────────
+class Minion:
+    BASE_SPEED  = 175
+    BASE_DMG    = 120
+    ATTACK_RANGE = 60   # world units (melee)
+    ATTACK_CD   = 0.4
+    FOLLOW_DIST = 110
+
+    def __init__(self, x, y, player_max_hp, necro_lv=0):
+        self.x = x; self.y = y
+        hp_mult  = 1.0 + necro_lv * 0.5
+        dmg_mult = 1.0 + necro_lv * 0.3
+        self.max_hp = int(player_max_hp * 3 * hp_mult)
+        self.hp     = self.max_hp
+        self.dmg    = int(self.BASE_DMG * dmg_mult)
+        self.speed  = self.BASE_SPEED
+        self.alive  = True
+        self.atk_cd = 0.0
+        self.facing = 0.0
+        self.hurt_flash = 0.0
+
+    def update(self, dt, enemies, player, all_minions=None, idx=0):
+        if not self.alive: return
+        if self.atk_cd  > 0: self.atk_cd   -= dt
+        if self.hurt_flash > 0: self.hurt_flash -= dt
+        # 分散ターゲット: インデックスごとに異なる敵を狙う
+        live = sorted([e for e in enemies if e.alive],
+                      key=lambda e: math.hypot(e.x-self.x, e.y-self.y))
+        if live:
+            target = live[idx % len(live)]
+            dx = target.x - self.x; dy = target.y - self.y
+            d  = math.hypot(dx, dy) or 1
+            self.facing = math.atan2(dy, dx)
+            if d > self.ATTACK_RANGE:
+                self.x += dx/d * self.speed * dt
+                self.y += dy/d * self.speed * dt
+            elif self.atk_cd <= 0:
+                target.hp -= self.dmg
+                self.atk_cd = self.ATTACK_CD
+        else:
+            # 扇形に分散してプレイヤー周囲を囲む
+            angle = (idx / max(len(all_minions) if all_minions else 1, 1)) * math.pi * 2
+            tx = player.x + math.cos(angle) * self.FOLLOW_DIST * 0.7
+            ty = player.y + math.sin(angle) * self.FOLLOW_DIST * 0.7
+            dx = tx - self.x; dy = ty - self.y
+            d  = math.hypot(dx, dy) or 1
+            if d > 20:
+                self.x += dx/d * self.speed * dt
+                self.y += dy/d * self.speed * dt
+        # ミニオン同士の反発（重なり防止）
+        if all_minions:
+            for other in all_minions:
+                if other is self: continue
+                sx = self.x - other.x; sy = self.y - other.y
+                sd = math.hypot(sx, sy) or 1
+                if sd < 55:
+                    push = (55 - sd) / 55 * 180
+                    self.x += sx/sd * push * dt
+                    self.y += sy/sd * push * dt
+
+    def draw(self, surf, ox, oy):
+        sx, sy = iso_pos(self.x, self.y, 0, ox, oy)
+        draw_shadow(surf, self.x, self.y, ox, oy, 18, 55)
+        if _KYONSI_IMG is not None:
+            iw, ih = _KYONSI_IMG.get_size()
+            img = pygame.transform.flip(_KYONSI_IMG, math.cos(self.facing) < 0, False)
+            if self.hurt_flash > 0:
+                img = img.copy()
+                img.fill((255,80,80, int(160*min(self.hurt_flash/0.15,1))),
+                         special_flags=pygame.BLEND_RGBA_ADD)
+            surf.blit(img, (sx - iw//2, sy - ih))
+            bar_y = sy - ih - 5
+        else:
+            pygame.draw.circle(surf, (100, 160, 220), (sx, sy-22), 18)
+            bar_y = sy - 44
+        bw = 36; hp_r = max(0, self.hp / self.max_hp)
+        pygame.draw.rect(surf, (60, 0, 0),    (sx - bw//2, bar_y, bw, 4))
+        pygame.draw.rect(surf, (0, 200, 110), (sx - bw//2, bar_y, int(bw*hp_r), 4))
+
+
+MINION_MAX = 35  # 最大召喚数上限
+
+def minion_cap(level):
+    """Lv1=1, 2倍ずつ増加、上限20体"""
+    return min(2 ** (level - 1), MINION_MAX)
 
 
 # ─────────────────────────────────────────────
@@ -1546,8 +2143,10 @@ class Player:
         self.x=self.y=0.0; self.max_hp=char_data["hp"]; self.hp=self.max_hp
         self.speed=char_data["speed"]; self.char_color=char_data["color"]
         self.radius=16; self.alive=True; self.hurt_sound_cd=0.0
-        self.bob=0.0; self.ice_dir=(0.0,0.0); self.hurt_flash=0.0
+        self.bob=0.0; self.ice_dir=(0.0,0.0); self.hurt_flash=0.0; self.facing=1  # 1=右, -1=左
         self.sprite=sprites.get(char_data["sprite"])
+        self.char_name=char_data["name"]
+        self.sp=0.0; self.sp_max=200.0; self.sp_ready=False
         self.weapons={
             "wand":     {"level":char_data["weapons"]["wand"],     "timer":0.0,"cooldown":char_data["wand_cd"]},
             "axe":      {"level":char_data["weapons"]["axe"],      "timer":0.0,"cooldown":1.5},
@@ -1561,6 +2160,8 @@ class Player:
         self.aura=None
         self.valley_immune=char_data.get("valley_immune",False)
         self.magma_immune=char_data.get("magma_immune",False)
+        self.necro_only=char_data.get("necro_only",False)
+        self.necro_level=0
         self.accessories=set()
         self.evolutions=set()
 
@@ -1571,6 +2172,7 @@ class Player:
         if keys[pygame.K_a] or keys[pygame.K_LEFT]:  dx-=1
         if keys[pygame.K_d] or keys[pygame.K_RIGHT]: dx+=1
         ndx,ndy=norm(dx,dy)
+        if dx != 0: self.facing = 1 if dx > 0 else -1  # 左右移動で向きを更新
 
         cur_t=terrain_map.at(self.x,self.y) if terrain_map else TERRAIN_GRASS
         if cur_t==TERRAIN_ICE:
@@ -1827,16 +2429,17 @@ class Player:
         draw_shadow(surf,self.x,self.y,ox,oy,self.radius,70)
         gsx,gsy=iso_pos(self.x,self.y,0,ox,oy)
         if self.sprite:
-            dy=gsy-self.sprite.get_height()-int(hover)
-            dx=gsx-self.sprite.get_width()//2
+            spr = pygame.transform.flip(self.sprite, self.facing < 0, False)
+            dy=gsy-spr.get_height()-int(hover)
+            dx=gsx-spr.get_width()//2
             if self.hurt_flash>0:
-                flash_spr=self.sprite.copy()
+                flash_spr=spr.copy()
                 alpha=int(180*min(self.hurt_flash/0.18,1.0))
                 flash_spr.fill((255,0,0,alpha),special_flags=pygame.BLEND_RGBA_MULT)
                 flash_spr.fill((255,80,80,alpha),special_flags=pygame.BLEND_RGBA_ADD)
                 surf.blit(flash_spr,(dx,dy))
             else:
-                surf.blit(self.sprite,(dx,dy))
+                surf.blit(spr,(dx,dy))
             bw=80; ratio=max(0,self.hp/self.max_hp)
             pygame.draw.rect(surf,GRAY,(gsx-40,dy-14,bw,8))
             pygame.draw.rect(surf,RED, (gsx-40,dy-14,int(bw*ratio),8))
@@ -1866,71 +2469,72 @@ class Player:
 # Upgrade system / Spawn / HUD / Screens
 # ─────────────────────────────────────────────
 UPGRADES=[
-    {"name":"Wand Lv+",     "desc":"Faster, stronger magic bolt",   "key":"wand"},
-    {"name":"Axe",          "desc":"Cleaving axe through enemies",  "key":"axe"},
-    {"name":"Holy Cross",   "desc":"Cross fires in 4 directions",   "key":"cross"},
-    {"name":"Garlic",       "desc":"Damage aura around you",        "key":"garlic"},
-    {"name":"Lightning",    "desc":"Chain lightning strikes",       "key":"lightning"},
-    {"name":"Flame",        "desc":"Burning fire zone",             "key":"flame"},
-    {"name":"Scatter Bolt", "desc":"Random multi-target lightning", "key":"scatter"},
-    {"name":"Speed Up",     "desc":"Move 15% faster",               "key":"speed"},
-    {"name":"Max HP Up",    "desc":"Max HP +30, restore 30",        "key":"maxhp"},
+    {"name":"魔杖Lv+",     "desc":"速く・強い魔法弾",       "key":"wand"},
+    {"name":"斧",          "desc":"敵を貫く斧",             "key":"axe"},
+    {"name":"聖十字",      "desc":"4方向に十字発射",         "key":"cross"},
+    {"name":"ガーリック",  "desc":"周囲にダメージオーラ",   "key":"garlic"},
+    {"name":"雷",          "desc":"連鎖雷撃",               "key":"lightning"},
+    {"name":"炎",          "desc":"燃焼ゾーン展開",         "key":"flame"},
+    {"name":"拡散弾",      "desc":"ランダム多目標雷",       "key":"scatter"},
+    {"name":"スピードUP",  "desc":"移動速度+15%",           "key":"speed"},
+    {"name":"最大HPアップ","desc":"最大HP+30・回復30",      "key":"maxhp"},
+    {"name":"死霊強化",   "desc":"死霊HP+50%・攻撃力+30%","key":"necro_upgrade"},
 ]
 
 # T1 accessories (unlock first evolution per weapon)
 # T2 accessories (unlock second evolution per weapon)
 ACCESSORIES=[
-    {"name":"Tome of Arcane",  "desc":"Wand S4: Arcane Bolt",        "key":"acc_tome",   "color":(100,150,255), "tier":1},
-    {"name":"Warrior Ring",    "desc":"Axe S4: Death Scythe",        "key":"acc_ring",   "color":(255,160,40),  "tier":1},
-    {"name":"Thunder Rod",     "desc":"Lightning S4: Chain Storm",   "key":"acc_rod",    "color":(0,220,255),   "tier":1},
-    {"name":"Hellfire Ember",  "desc":"Flame S4: Inferno",           "key":"acc_ember",  "color":(255,80,30),   "tier":1},
-    {"name":"Crystal Orb",     "desc":"Wand S5: Arcane Barrage",     "key":"acc_crystal","color":(200,230,255), "tier":2},
-    {"name":"Reaper's Edge",   "desc":"Axe S5: Soul Reaper",         "key":"acc_reaper", "color":(180,50,255),  "tier":2},
-    {"name":"Storm Crown",     "desc":"Lightning S5: Omega Storm",   "key":"acc_crown",  "color":(50,255,220),  "tier":2},
-    {"name":"Abyssal Core",    "desc":"Flame S5: Dragon Fire",       "key":"acc_abyss",  "color":(255,50,0),    "tier":2},
+    {"name":"魔導書",      "desc":"魔杖S4: アルカンボルト",    "key":"acc_tome",   "color":(100,150,255), "tier":1},
+    {"name":"戦士の指輪",  "desc":"斧S4: デスサイズ",         "key":"acc_ring",   "color":(255,160,40),  "tier":1},
+    {"name":"雷の杖",      "desc":"雷S4: チェインストーム",   "key":"acc_rod",    "color":(0,220,255),   "tier":1},
+    {"name":"地獄炎石",    "desc":"炎S4: インフェルノ",       "key":"acc_ember",  "color":(255,80,30),   "tier":1},
+    {"name":"水晶球",      "desc":"魔杖S5: アルカンバレッジ", "key":"acc_crystal","color":(200,230,255), "tier":2},
+    {"name":"死神の刃",    "desc":"斧S5: ソウルリーパー",     "key":"acc_reaper", "color":(180,50,255),  "tier":2},
+    {"name":"嵐の王冠",    "desc":"雷S5: オメガストーム",     "key":"acc_crown",  "color":(50,255,220),  "tier":2},
+    {"name":"深淵核",      "desc":"炎S5: ドラゴンファイア",   "key":"acc_abyss",  "color":(255,50,0),    "tier":2},
 ]
 
 # Each node: key, name, color, stage, requirements (list of dicts)
 # req types: {"w":key,"lv":n}  {"acc":key}  {"evo":key}
 EVOLUTION_NODES=[
     # ── Stage 4 (weapon Lv5 + T1 acc) ───────────────────────
-    {"key":"evo_arcane",  "name":"Arcane Bolt",    "color":(120,180,255),"stage":4,
+    {"key":"evo_arcane",  "name":"アルカンボルト",   "color":(120,180,255),"stage":4,
      "req":[{"w":"wand","lv":5},      {"acc":"acc_tome"}]},
-    {"key":"evo_scythe",  "name":"Death Scythe",   "color":(200,80,255), "stage":4,
+    {"key":"evo_scythe",  "name":"デスサイズ",      "color":(200,80,255), "stage":4,
      "req":[{"w":"axe","lv":5},       {"acc":"acc_ring"}]},
-    {"key":"evo_storm",   "name":"Chain Storm",    "color":(0,240,255),  "stage":4,
+    {"key":"evo_storm",   "name":"チェインストーム","color":(0,240,255),  "stage":4,
      "req":[{"w":"lightning","lv":5}, {"acc":"acc_rod"}]},
-    {"key":"evo_inferno", "name":"Inferno",        "color":(255,120,20), "stage":4,
+    {"key":"evo_inferno", "name":"インフェルノ",    "color":(255,120,20), "stage":4,
      "req":[{"w":"flame","lv":5},     {"acc":"acc_ember"}]},
 
     # ── Stage 5 (S4 evo + T2 acc + weapon Lv7) ───────────────
-    {"key":"evo_arcane2",  "name":"Arcane Barrage", "color":(80,140,255), "stage":5,
+    {"key":"evo_arcane2",  "name":"アルカンバレッジ","color":(80,140,255), "stage":5,
      "req":[{"evo":"evo_arcane"},  {"w":"wand","lv":7},      {"acc":"acc_crystal"}]},
-    {"key":"evo_scythe2",  "name":"Soul Reaper",    "color":(220,60,255), "stage":5,
+    {"key":"evo_scythe2",  "name":"ソウルリーパー", "color":(220,60,255), "stage":5,
      "req":[{"evo":"evo_scythe"},  {"w":"axe","lv":7},       {"acc":"acc_reaper"}]},
-    {"key":"evo_storm2",   "name":"Omega Storm",    "color":(0,255,180),  "stage":5,
+    {"key":"evo_storm2",   "name":"オメガストーム",  "color":(0,255,180),  "stage":5,
      "req":[{"evo":"evo_storm"},   {"w":"lightning","lv":7}, {"acc":"acc_crown"}]},
-    {"key":"evo_inferno2", "name":"Dragon Fire",    "color":(255,50,0),   "stage":5,
+    {"key":"evo_inferno2", "name":"ドラゴンファイア","color":(255,50,0),   "stage":5,
      "req":[{"evo":"evo_inferno"}, {"w":"flame","lv":7},     {"acc":"acc_abyss"}]},
 
     # ── Stage 6 (two S4 evos fused) ──────────────────────────
-    {"key":"evo_arcane_storm","name":"Arcane Storm",   "color":(180,240,255),"stage":6,
+    {"key":"evo_arcane_storm","name":"アルカンストーム",    "color":(180,240,255),"stage":6,
      "req":[{"evo":"evo_arcane"},{"evo":"evo_storm"}]},
-    {"key":"evo_apocalypse",  "name":"Apocalypse",     "color":(200,30,30),  "stage":6,
+    {"key":"evo_apocalypse",  "name":"アポカリプス",        "color":(200,30,30),  "stage":6,
      "req":[{"evo":"evo_scythe"},{"evo":"evo_inferno"}]},
-    {"key":"evo_thunder_gen", "name":"Thunder Genesis","color":(0,255,255),  "stage":6,
+    {"key":"evo_thunder_gen", "name":"サンダージェネシス",  "color":(0,255,255),  "stage":6,
      "req":[{"evo":"evo_arcane2"},{"evo":"evo_storm2"}]},
-    {"key":"evo_doom",        "name":"Doom Bringer",   "color":(150,0,200),  "stage":6,
+    {"key":"evo_doom",        "name":"ドゥームブリンガー",  "color":(150,0,200),  "stage":6,
      "req":[{"evo":"evo_scythe2"},{"evo":"evo_inferno2"}]},
 
     # ── Stage 7 (S5+S6 cross-fusions) ────────────────────────
-    {"key":"evo_armageddon","name":"Armageddon",  "color":(255,110,30),"stage":7,
+    {"key":"evo_armageddon","name":"アルマゲドン",  "color":(255,110,30),"stage":7,
      "req":[{"evo":"evo_arcane_storm"},{"evo":"evo_doom"}]},
-    {"key":"evo_ragnarok",  "name":"Ragnarok",    "color":(255,40,100),"stage":7,
+    {"key":"evo_ragnarok",  "name":"ラグナロク",    "color":(255,40,100),"stage":7,
      "req":[{"evo":"evo_thunder_gen"},{"evo":"evo_apocalypse"}]},
 
     # ── Stage 8 (GENESIS) ─────────────────────────────────────
-    {"key":"evo_genesis","name":"★ GENESIS ★","color":(255,215,0),"stage":8,
+    {"key":"evo_genesis","name":"★ ジェネシス ★","color":(255,215,0),"stage":8,
      "req":[{"evo":"evo_armageddon"},{"evo":"evo_ragnarok"}]},
 ]
 
@@ -1948,7 +2552,15 @@ def check_evolutions(player):
     return new_evos
 
 def pick_upgrades(player,n=3):
-    pool=[u for u in UPGRADES if not (u["key"]=="wand" and player.weapons["wand"]["level"]>=8)
+    if player.necro_only:
+        pool = [
+            {"name":"死霊強化",   "desc":"死霊HP+50%・攻撃力+30%","key":"necro_upgrade"},
+            {"name":"最大HPアップ","desc":"最大HP+30・回復30",      "key":"maxhp"},
+            {"name":"スピードUP", "desc":"移動速度+15%",            "key":"speed"},
+        ]
+        random.shuffle(pool); return pool[:n]
+    pool=[u for u in UPGRADES if u["key"]!="necro_upgrade"
+          and not (u["key"]=="wand"    and player.weapons["wand"]["level"]>=8)
           and not (u["key"]=="scatter" and player.weapons["scatter"]["level"]>=8)]
     for acc in ACCESSORIES:
         if acc["key"] not in player.accessories:
@@ -1966,8 +2578,9 @@ def apply_upgrade(player,key):
         if key=="flame":     w["cooldown"]=max(1.5, 4.0 -w["level"]*0.30)
         if key=="scatter":   w["cooldown"]=max(0.8, 2.2 -w["level"]*0.18)
         return check_evolutions(player)
-    elif key=="speed":  player.speed*=1.15
-    elif key=="maxhp":  player.max_hp+=30; player.hp=min(player.hp+30,player.max_hp)
+    elif key=="speed":        player.speed*=1.15
+    elif key=="maxhp":        player.max_hp+=30; player.hp=min(player.hp+30,player.max_hp)
+    elif key=="necro_upgrade": player.necro_level+=1
     return []
 
 def apply_chest_reward(player,key):
@@ -1989,10 +2602,18 @@ def spawn_enemy(px,py,elapsed):
                  damage=15*v["dmg"],radius=v["r"],color=RED,xp=5,sprite_key=v["key"])
 
 def maybe_spawn(px,py,elapsed,since_last,enemies,underground=False):
-    rate=max(0.3,1.5-elapsed/120)
-    if since_last>=rate:
-        count=min(1+int(elapsed//30),6)
-        if underground: count*=10
+    # 0-3min: rate 1.5→0.7, count 1-6
+    # 3-5min: rate 0.35→0.15, count 8-16  (大増殖フェーズ)
+    if elapsed < 180:
+        rate  = max(0.7, 1.5 - elapsed/120)
+        count = min(1+int(elapsed//30), 6)
+    else:
+        # 3分以降: 急激に増加
+        t2    = elapsed - 180
+        rate  = max(0.12, 0.7 - t2/60)
+        count = min(8+int(t2//10), 20)
+    if underground: count *= 10
+    if since_last >= rate:
         for _ in range(count):
             enemies.append(spawn_enemy(px,py,elapsed))
         return 0.0
@@ -2040,7 +2661,7 @@ def _divider(surf, x, y, w, color):
     pygame.draw.rect(surf, color, (x+w-4, y-1, 4, 3))
 
 
-def draw_hud(surf, player, level, xp, xp_next, elapsed, kills, boss_warn):
+def draw_hud(surf, player, level, xp, xp_next, elapsed, kills, boss_warn, victory_time=300):
     t_ms = pygame.time.get_ticks()
 
     # ── Bottom XP panel ──
@@ -2048,20 +2669,43 @@ def draw_hud(surf, player, level, xp, xp_next, elapsed, kills, boss_warn):
     _ang_panel(surf, 0, H-bar_h, W, bar_h, UI_BG, NEON_P, cut=0, bw=1)
     lv_s = font_small.render(f"LV.{level:02d}", True, NEON_G)
     surf.blit(lv_s, (6, H-bar_h+4))
-    _seg_bar(surf, 68, H-bar_h+5, W-136, bar_h-10, xp/xp_next, NEON_G)
+    _seg_bar(surf, 68, H-bar_h+5, W-280, bar_h-10, xp/xp_next, NEON_G)
     xp_s = font_tiny.render(f"{xp}/{xp_next} XP", True, (80,75,100))
-    surf.blit(xp_s, (W-xp_s.get_width()-6, H-bar_h+6))
+    surf.blit(xp_s, (68+(W-280-xp_s.get_width())-6, H-bar_h+6))
 
-    # ── Timer (top center) ──
-    m2, s2 = divmod(int(elapsed), 60)
+    # SP gauge (bottom right)
+    sp_ratio = player.sp / player.sp_max
+    sp_full  = player.sp >= player.sp_max
+    sp_col   = (255,200,0) if sp_full else (200,140,0)
+    sp_x = W - 268; sp_w = 260; sp_y = H - bar_h + 3; sp_h = bar_h - 6
+    _ang_panel(surf, sp_x-4, H-bar_h, sp_w+8, bar_h, (15,12,5), sp_col, cut=0, bw=1)
+    _seg_bar(surf, sp_x, sp_y, sp_w, sp_h, sp_ratio, sp_col)
+    sp_lbl = font_tiny.render("SP  [SPACE]" if sp_full else f"SP {int(player.sp)}/{int(player.sp_max)}", True, sp_col)
+    surf.blit(sp_lbl, (sp_x+4, H-bar_h+6))
+    if sp_full:
+        pulse = abs(math.sin(t_ms/200))
+        gsp = pygame.Surface((sp_w+8, bar_h), pygame.SRCALPHA)
+        gsp.fill((255,200,0, int(30+pulse*40)))
+        surf.blit(gsp, (sp_x-4, H-bar_h))
+
+    # ── Countdown Timer (top center) ──
+    remaining = max(0, int(victory_time - elapsed))
+    m2, s2 = divmod(remaining, 60)
     t_str  = f"[ {m2:02d}:{s2:02d} ]"
-    t_surf = font_med.render(t_str, True, (200,200,210))
+    danger = remaining <= 30
+    t_col  = (255,60,60) if danger else (200,200,210)
+    t_surf = font_med.render(t_str, True, t_col)
     tw = t_surf.get_width()+28
-    _ang_panel(surf, W//2-tw//2, 4, tw, 38, UI_BG, NEON_P, cut=7, bw=2)
+    border_c = NEON_R if danger else NEON_P
+    _ang_panel(surf, W//2-tw//2, 4, tw, 38, UI_BG, border_c, cut=7, bw=2)
     surf.blit(t_surf, (W//2-t_surf.get_width()//2, 9))
+    if danger:
+        pulse2 = abs(math.sin(t_ms/180))
+        t_surf.set_alpha(int(180+pulse2*75))
+        surf.blit(t_surf, (W//2-t_surf.get_width()//2, 9))
 
     # ── Kill counter (top right) ──
-    k_s = font_small.render(f"KILLS:{kills:04d}", True, NEON_R)
+    k_s = font_small.render(f"撃破:{kills:04d}", True, NEON_R)
     kw  = k_s.get_width()+18
     _ang_panel(surf, W-kw-4, 4, kw, 30, UI_BG, NEON_R, cut=5, bw=1)
     surf.blit(k_s, (W-k_s.get_width()-10, 9))
@@ -2081,7 +2725,7 @@ def draw_hud(surf, player, level, xp, xp_next, elapsed, kills, boss_warn):
         wx += cw2+4
 
     # ── Mute hint ──
-    surf.blit(font_tiny.render("[M]MUTE  [ESC]PAUSE", True, (45,40,65)), (W-148, H-bar_h-16))
+    surf.blit(font_tiny.render("[M]ミュート  [ESC]ポーズ", True, (45,40,65)), (W-160, H-bar_h-16))
 
     # ── Boss warning ──
     if boss_warn > 0:
@@ -2091,7 +2735,7 @@ def draw_hud(surf, player, level, xp, xp_next, elapsed, kills, boss_warn):
         surf.blit(flash, (0,0))
         pulse  = abs(math.sin(t_ms/85))
         warn_c = (255, int(15+pulse*50), int(15+pulse*30))
-        warn   = font_large.render("!! BOSS INCOMING !!", True, warn_c)
+        warn   = font_large.render("!! ボス出現 !!", True, warn_c)
         warn.set_alpha(alpha)
         pw, ph = warn.get_width()+48, warn.get_height()+24
         wp     = pygame.Surface((pw, ph), pygame.SRCALPHA)
@@ -2112,14 +2756,14 @@ def levelup_screen(surf, options):
         pygame.draw.line(surf, (0, 0, 0, 18), (0, row), (W, row))
 
     # Title
-    title = font_large.render("// POWER SURGE //", True, NEON_G)
+    title = font_large.render("// パワーサージ //", True, NEON_G)
     _ang_panel(surf, W//2-title.get_width()//2-20, 70,
                title.get_width()+40, title.get_height()+16, UI_BG, NEON_G, cut=10, bw=2)
     _brackets(surf, W//2-title.get_width()//2-20, 70,
               title.get_width()+40, title.get_height()+16, NEON_G, size=12)
     surf.blit(title, (W//2-title.get_width()//2, 78))
 
-    sub = font_small.render("SELECT UPGRADE  [ 1 ]  [ 2 ]  [ 3 ]", True, (100,95,130))
+    sub = font_small.render("スキル選択  [ 1 ]  [ 2 ]  [ 3 ]", True, (100,95,130))
     surf.blit(sub, (W//2-sub.get_width()//2, 158))
 
     cw, ch = 330, 130
@@ -2194,7 +2838,7 @@ def character_select(surf, sprites):
                 pygame.draw.circle(surf, (38, 28, 60), (gx*step, gy*step), 2)
 
         # Header panel
-        title_str = "//  SELECT  WARRIOR  //"
+        title_str = "//  キャラクター選択  //"
         title_s   = font_large.render(title_str, True, NEON_P)
         th = title_s.get_height()
         _ang_panel(surf, W//2-title_s.get_width()//2-24, 30,
@@ -2203,7 +2847,7 @@ def character_select(surf, sprites):
                   title_s.get_width()+48, th+16, NEON_P, size=14)
         surf.blit(title_s, (W//2-title_s.get_width()//2, 38))
 
-        sub_s = font_small.render("PRESS  [ 1 ] - [ 6 ]  OR  CLICK", True, (80,75,110))
+        sub_s = font_small.render("[ 1 ] - [ 6 ] またはクリックで選択", True, (80,75,110))
         surf.blit(sub_s, (W//2-sub_s.get_width()//2, 120))
 
         mx, my = pygame.mouse.get_pos()
@@ -2495,7 +3139,7 @@ def draw_evolution_tree(surf, player):
     for row in range(0,H,8): pygame.draw.line(surf,(0,0,0,30),(0,row),(W,row))
 
     # Title bar
-    title=font_large.render("// EVOLUTION TREE //",True,(255,215,0))
+    title=font_large.render("// 進化ツリー //",True,(255,215,0))
     pulse=abs(math.sin(t_ms*0.0015))
     tw=title.get_width()+50
     _ang_panel(surf,W//2-tw//2,4,tw,36,UI_BG,(255,215,0),cut=10,bw=2)
@@ -2598,9 +3242,9 @@ def draw_evolution_tree(surf, player):
         return "  ".join(parts)
 
     # ── Stage labels on left margin ───────────────────────────────────────────
-    for label,cy in [("T1 Accessories",SY["acc1"]),("T2 Accessories",SY["acc2"]),
-                     ("Stage IV",SY["s4"]),("Stage V",SY["s5"]),
-                     ("Stage VI",SY["s6"]),("Stage VII",SY["s7"]),("Stage VIII",SY["s8"])]:
+    for label,cy in [("T1アクセサリ",SY["acc1"]),("T2アクセサリ",SY["acc2"]),
+                     ("ステージIV",SY["s4"]),("ステージV",SY["s5"]),
+                     ("ステージVI",SY["s6"]),("ステージVII",SY["s7"]),("ステージVIII",SY["s8"])]:
         sl=font_tiny.render(label,True,(70,65,90))
         surf.blit(sl,(6,cy-7))
         pygame.draw.line(surf,(40,38,55),(90,cy),(LANES[0]-NW//2-6,cy))
@@ -2664,79 +3308,125 @@ def draw_evolution_tree(surf, player):
             _wire(px2,py2,cx8,top8[1],col,2)
 
     # ── Hint ──────────────────────────────────────────────────────────────────
-    hint=font_tiny.render("[ESC] / [T]  Back to Pause          ✓ = Unlocked   ✗ = Locked",
+    hint=font_tiny.render("[ESC]/[T] ポーズへ戻る          ✓=解放済み   ✗=未解放",
                           True,(70,65,90))
     surf.blit(hint,(W//2-hint.get_width()//2,H-18))
     return {}
 
 
+def _draw_vol_slider(surf, lbl, x, y, w, h, vol, col, hover_bar):
+    """音量スライダーを描画して bar rect を返す。"""
+    # ラベル
+    ls = font_small.render(lbl, True, col)
+    surf.blit(ls, (x, y + h//2 - ls.get_height()//2))
+    lw = ls.get_width() + 12
+    # ← ボタン
+    lbtn = pygame.Rect(x+lw, y, h, h)
+    pygame.draw.rect(surf, (30,24,50), lbtn, border_radius=4)
+    pygame.draw.rect(surf, col, lbtn, 1, border_radius=4)
+    arr = font_small.render("◀", True, col)
+    surf.blit(arr, (lbtn.x + lbtn.w//2 - arr.get_width()//2,
+                    lbtn.y + lbtn.h//2 - arr.get_height()//2))
+    # バー本体
+    bar_x = x + lw + h + 8; bar_w = w - lw - h*2 - 20
+    bar = pygame.Rect(bar_x, y + h//2 - 6, bar_w, 12)
+    pygame.draw.rect(surf, (20,16,32), bar, border_radius=6)
+    fill_w = int(bar_w * vol)
+    if fill_w > 0:
+        fill_col = col if not hover_bar else tuple(min(255,c+40) for c in col)
+        pygame.draw.rect(surf, fill_col, (bar_x, y+h//2-6, fill_w, 12), border_radius=6)
+    # ハンドル
+    hx = bar_x + fill_w
+    pygame.draw.circle(surf, WHITE, (hx, y+h//2), 9)
+    pygame.draw.circle(surf, col,   (hx, y+h//2), 7)
+    # % 表示
+    pct = font_small.render(f"{int(vol*100):3d}%", True, (160,155,190))
+    surf.blit(pct, (bar_x + bar_w + 10, y + h//2 - pct.get_height()//2))
+    # → ボタン
+    rbtn = pygame.Rect(bar_x + bar_w + 10 + pct.get_width() + 8, y, h, h)
+    pygame.draw.rect(surf, (30,24,50), rbtn, border_radius=4)
+    pygame.draw.rect(surf, col, rbtn, 1, border_radius=4)
+    arr2 = font_small.render("▶", True, col)
+    surf.blit(arr2, (rbtn.x + rbtn.w//2 - arr2.get_width()//2,
+                     rbtn.y + rbtn.h//2 - arr2.get_height()//2))
+    return bar, lbtn, rbtn
+
+
 def pause_screen(surf):
-    """
-    ポーズ画面を描画し、プレイヤー操作を待つ。
-    戻り値: "resume" | "char_select" | "quit"
-    """
+    """ポーズ画面を描画。rects に音量バー・ボタンも含める。"""
     t_ms = pygame.time.get_ticks()
 
-    # 半透明オーバーレイ
     overlay = pygame.Surface((W, H), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 175))
     surf.blit(overlay, (0, 0))
-
-    # スキャンライン
     for row in range(0, H, 4):
         pygame.draw.line(surf, (0, 0, 0, 20), (0, row), (W, row))
 
-    # タイトル
-    title = font_large.render("//  PAUSED  //", True, NEON_P)
+    title = font_large.render("//  一時停止  //", True, NEON_P)
     pulse = abs(math.sin(t_ms / 600))
     title.set_alpha(int(180 + pulse * 75))
     tw = title.get_width() + 48
-    _ang_panel(surf, W//2 - tw//2, 80, tw, title.get_height() + 20, UI_BG, NEON_P, cut=12, bw=2)
-    _brackets(surf, W//2 - tw//2, 80, tw, title.get_height() + 20, NEON_P, size=14)
-    surf.blit(title, (W//2 - title.get_width()//2, 88))
+    _ang_panel(surf, W//2 - tw//2, 60, tw, title.get_height() + 20, UI_BG, NEON_P, cut=12, bw=2)
+    _brackets(surf, W//2 - tw//2, 60, tw, title.get_height() + 20, NEON_P, size=14)
+    surf.blit(title, (W//2 - title.get_width()//2, 68))
 
-    # メニュー項目定義
     ITEMS = [
-        {"label": "RESUME",           "key": "resume",      "color": NEON_G,  "hint": "[ESC]"},
-        {"label": "EVOLUTION TREE",   "key": "tree",        "color": (255,215,0), "hint": "[T]"},
-        {"label": "CHARACTER SELECT", "key": "char_select", "color": NEON_P,  "hint": "[C]"},
-        {"label": "QUIT GAME",        "key": "quit",        "color": NEON_R,  "hint": "[Q]"},
+        {"label":"再開",           "key":"resume",      "color":NEON_G,        "hint":"[ESC]"},
+        {"label":"進化ツリー",     "key":"tree",        "color":(255,215,0),   "hint":"[T]"},
+        {"label":"キャラ選択",     "key":"char_select", "color":NEON_P,        "hint":"[C]"},
+        {"label":"ゲーム終了",     "key":"quit",        "color":NEON_R,        "hint":"[Q]"},
     ]
-    iw, ih, gap = 420, 64, 16
-    total_h = len(ITEMS) * ih + (len(ITEMS) - 1) * gap
-    iy0 = H // 2 - total_h // 2 + 10
+    iw, ih, gap = 420, 54, 12
+    total_h = len(ITEMS)*ih + (len(ITEMS)-1)*gap
+    iy0 = 155
     mx, my = pygame.mouse.get_pos()
-
     rects = {}
     for i, item in enumerate(ITEMS):
-        rx = W // 2 - iw // 2
-        ry = iy0 + i * (ih + gap)
+        rx = W//2 - iw//2; ry = iy0 + i*(ih+gap)
         rect = pygame.Rect(rx, ry, iw, ih)
         rects[item["key"]] = rect
         hover = rect.collidepoint(mx, my)
         c = item["color"]
-        bg = (28, 20, 44) if not hover else (40, 28, 62)
+        bg = (28,20,44) if not hover else (40,28,62)
         _ang_panel(surf, rx, ry, iw, ih, bg, c, cut=10, bw=2)
         if hover:
             gs = pygame.Surface((iw, ih), pygame.SRCALPHA)
-            _ang_panel(gs, 0, 0, iw, ih, (0, 0, 0, 0), (*c, 55), cut=10, bw=4)
+            _ang_panel(gs, 0, 0, iw, ih, (0,0,0,0), (*c,55), cut=10, bw=4)
             surf.blit(gs, (rx, ry))
         _brackets(surf, rx, ry, iw, ih, c, size=10, bw=1)
-        # ヒントキー（左）
         hint_s = font_small.render(item["hint"], True, c)
-        surf.blit(hint_s, (rx + 14, ry + ih // 2 - hint_s.get_height() // 2))
-        # ラベル（中央）
+        surf.blit(hint_s, (rx+14, ry+ih//2 - hint_s.get_height()//2))
         lbl = font_med.render(item["label"], True, WHITE if not hover else c)
-        surf.blit(lbl, (W // 2 - lbl.get_width() // 2, ry + ih // 2 - lbl.get_height() // 2))
+        surf.blit(lbl, (W//2 - lbl.get_width()//2, ry+ih//2 - lbl.get_height()//2))
 
-    # 操作ヒント
-    hint2 = font_tiny.render("ESC: Resume  |  T: Tree  |  C: Char Select  |  Q: Quit", True, (60, 55, 85))
-    surf.blit(hint2, (W // 2 - hint2.get_width() // 2, H - 45))
+    # ── Volume section ──────────────────────────
+    vol_y = iy0 + len(ITEMS)*(ih+gap) + 18
+    vol_w = 560; vol_x = W//2 - vol_w//2; vol_h = 38
+
+    _ang_panel(surf, vol_x-14, vol_y-10, vol_w+28, vol_h*2+42, (12,9,22), NEON_Y, cut=8, bw=1)
+    cap = font_small.render("音量", True, NEON_Y)
+    surf.blit(cap, (W//2 - cap.get_width()//2, vol_y - 6))
+
+    bgm_bar, bgm_lbtn, bgm_rbtn = _draw_vol_slider(
+        surf, "BGM", vol_x, vol_y+16, vol_w, vol_h, _vol_bgm, NEON_Y,
+        pygame.Rect(vol_x+60, vol_y+16+vol_h//2-6, vol_w-100, 12).collidepoint(mx,my))
+    sfx_bar, sfx_lbtn, sfx_rbtn = _draw_vol_slider(
+        surf, "SFX", vol_x, vol_y+16+vol_h+10, vol_w, vol_h, _vol_sfx, NEON_B,
+        pygame.Rect(vol_x+60, vol_y+16+vol_h+10+vol_h//2-6, vol_w-100, 12).collidepoint(mx,my))
+
+    rects["bgm_bar"]  = bgm_bar
+    rects["sfx_bar"]  = sfx_bar
+    rects["bgm_lbtn"] = bgm_lbtn; rects["bgm_rbtn"] = bgm_rbtn
+    rects["sfx_lbtn"] = sfx_lbtn; rects["sfx_rbtn"] = sfx_rbtn
+
+    hint2 = font_tiny.render("ESC:再開  T:ツリー  C:キャラ選択  Q:終了  |  スライダーをドラッグまたは◀▶クリックで音量調整",
+                              True, (60,55,85))
+    surf.blit(hint2, (W//2 - hint2.get_width()//2, H-38))
 
     return rects
 
 
-def game_over_screen(surf, elapsed, kills, victory):
+def game_over_screen(surf, elapsed, kills, victory, score=0):
     surf.fill(DARK)
     # Background grid
     for gx in range(-1, W//80+2):
@@ -2746,10 +3436,10 @@ def game_over_screen(surf, elapsed, kills, victory):
 
     t_ms = pygame.time.get_ticks()
     if victory:
-        title_c = NEON_G;  title_t = "// MISSION COMPLETE //"
+        title_c = NEON_G;  title_t = "// ミッション完了 //"
         border_c = NEON_G
     else:
-        title_c = NEON_R;  title_t = "//  YOU  DIED  //"
+        title_c = NEON_R;  title_t = "//  ゲームオーバー  //"
         border_c = NEON_R
 
     title = font_large.render(title_t, True, title_c)
@@ -2757,7 +3447,7 @@ def game_over_screen(surf, elapsed, kills, victory):
     title.set_alpha(int(180 + pulse*75))
 
     # Main panel
-    pw, ph = 520, 300
+    pw, ph = 520, 340
     _ang_panel(surf, W//2-pw//2, H//2-ph//2-20, pw, ph, UI_BG, border_c, cut=16, bw=2)
     _brackets(surf, W//2-pw//2, H//2-ph//2-20, pw, ph, border_c, size=18, bw=2)
     _scan_overlay(surf, (W//2-pw//2, H//2-ph//2-20, pw, ph), 25)
@@ -2768,15 +3458,17 @@ def game_over_screen(surf, elapsed, kills, victory):
 
     m2, s2 = divmod(int(elapsed), 60)
     stats = [
-        f"TIME    {m2:02d}:{s2:02d}",
-        f"KILLS   {kills:04d}",
+        f"タイム    {m2:02d}:{s2:02d}",
+        f"撃破数    {kills:04d}",
+        f"スコア    {score:07d}",
     ]
     for i, line in enumerate(stats):
-        ls = font_med.render(line, True, (200,195,220))
+        c2 = GOLD if line.startswith("スコア") else (200,195,220)
+        ls = font_med.render(line, True, c2)
         surf.blit(ls, (W//2-ls.get_width()//2, H//2-ph//2+title.get_height()+28+i*38))
 
     _divider(surf, W//2-pw//2+20, H//2+ph//2-56, pw-40, (40,35,60))
-    hint = font_small.render("[ENTER] RESTART    [ESC] QUIT", True, (80,75,110))
+    hint = font_small.render("[ENTER] リスタート    [ESC] 終了", True, (80,75,110))
     surf.blit(hint, (W//2-hint.get_width()//2, H//2+ph//2-46))
 
 
@@ -2912,8 +3604,16 @@ def draw_bg(surf, ox, oy, terrain_map=None, underground=False, player_wx=0.0, pl
                 pygame.draw.polygon(surf,(30,26,22),face_l,1)
                 pygame.draw.polygon(surf,(30,26,22),face_r,1)
         else:
-            pygame.draw.polygon(surf,tile_col,pts)
-            pygame.draw.polygon(surf,grid_col,pts,1)
+            tile_img = None if underground else _TERRAIN_TILES.get(tt)
+            if tile_img:
+                # center the flat diamond tile on the diamond's screen center
+                cx_t = (p0[0] + p2[0]) // 2
+                cy_t = (p0[1] + p2[1]) // 2
+                tw2, th2 = tile_img.get_size()
+                surf.blit(tile_img, (cx_t - tw2 // 2, cy_t - th2 // 2))
+            else:
+                pygame.draw.polygon(surf, tile_col, pts)
+                pygame.draw.polygon(surf, grid_col, pts, 1)
             if tt==TERRAIN_MAGMA:
                 cx=sum(p[0] for p in pts)//4; cy=sum(p[1] for p in pts)//4
                 # ── メインパルス光 ──
@@ -3126,18 +3826,98 @@ def draw_bg(surf, ox, oy, terrain_map=None, underground=False, player_wx=0.0, pl
 
 
 # ─────────────────────────────────────────────
+# SP Ultimate skills (per character)
+# ─────────────────────────────────────────────
+def activate_sp_ultimate(char_name, player, enemies, floats, rings, particles, bullets, screen, ox, oy):
+    """SP必殺技。雑魚は一撃、ボス/ゴジラにはダメージのみ。"""
+    spr_bolts = []
+
+    def _is_boss(e):
+        return isinstance(e, (Boss, GodzillaEnemy))
+
+    if char_name == "Knight":
+        for e in enemies:
+            if _is_boss(e): e.hp -= 800
+            else:           e.hp  = 0
+            e.hit_flash = 0.3
+            rings.append(RingEffect(e.x, e.y, (220,160,40), e.radius*3, 4, 0.35))
+            for _ in range(5): particles.append(Particle(e.x, e.y, (255,200,50)))
+        rings.append(RingEffect(player.x, player.y, (255,200,50), 800, 6, 0.6))
+        floats.append(FloatText(player.x, player.y-100, "⚔ WAR CRY! ⚔", (255,200,50), 2.5))
+
+    elif char_name == "Mage":
+        for e in enemies:
+            if _is_boss(e): e.hp -= 800
+            else:           e.hp  = 0
+            e.hit_flash = 0.3
+            for _ in range(6): particles.append(Particle(e.x, e.y, (255,80,10)))
+            rings.append(RingEffect(e.x, e.y, (255,80,10), e.radius*4, 3, 0.4))
+        rings.append(RingEffect(player.x, player.y, (255,100,20), 600, 5, 0.5))
+        floats.append(FloatText(player.x, player.y-100, "☄ METEOR RAIN! ☄", (255,100,0), 2.5))
+
+    elif char_name == "Rogue":
+        for e in enemies:
+            if _is_boss(e): e.hp -= 700
+            else:           e.hp  = 0
+            e.hit_flash = 0.3
+            rings.append(RingEffect(e.x, e.y, (80,220,30), e.radius*2+6, 3, 0.35))
+        rings.append(RingEffect(player.x, player.y, (80,200,20), 700, 5, 0.7))
+        for _ in range(30):
+            a = random.uniform(0, math.pi*2); r2 = random.uniform(50, 400)
+            particles.append(Particle(player.x+math.cos(a)*r2, player.y+math.sin(a)*r2, (60,200,20)))
+        floats.append(FloatText(player.x, player.y-100, "☠ POISON MIST! ☠", (80,220,30), 2.5))
+
+    elif char_name == "Plague Dr":
+        for e in enemies:
+            if _is_boss(e): e.hp -= 900
+            else:           e.hp  = 0
+            e.hit_flash = 0.3
+            rings.append(RingEffect(e.x, e.y, (140,0,220), e.radius*2+8, 2, 0.22))
+        rings.append(RingEffect(player.x, player.y, (160,0,255), 900, 6, 0.8))
+        floats.append(FloatText(player.x, player.y-100, "✝ BLACK DEATH! ✝", (160,0,255), 2.5))
+
+    elif char_name == "Lightning Mage":
+        for e in enemies:
+            if _is_boss(e): e.hp -= 800
+            else:           e.hp  = 0
+            e.hit_flash = 0.3
+            rings.append(RingEffect(e.x, e.y, (0,220,255), e.radius*3, 3, 0.3))
+            for _ in range(4): particles.append(Particle(e.x, e.y, (0,220,255)))
+        rings.append(RingEffect(player.x, player.y, (0,200,255), 750, 5, 0.55))
+        floats.append(FloatText(player.x, player.y-100, "⚡ THUNDERBOLT RAIN! ⚡", (0,220,255), 2.5))
+
+    elif char_name == "Valley Wraith":
+        for e in enemies:
+            if _is_boss(e):
+                e.hp -= 600
+            else:
+                e.hp = 0
+                e.x = player.x + (e.x-player.x)*0.1
+                e.y = player.y + (e.y-player.y)*0.1
+            e.hit_flash = 0.3
+            rings.append(RingEffect(e.x, e.y, (100,0,200), e.radius*2, 3, 0.3))
+        rings.append(RingEffect(player.x, player.y, (120,0,255), 1000, 7, 0.9))
+        floats.append(FloatText(player.x, player.y-100, "🌀 VOID COLLAPSE! 🌀", (160,60,255), 2.5))
+
+    return spr_bolts
+
+
+# ─────────────────────────────────────────────
 # Main game loop
 # ─────────────────────────────────────────────
 def run_game(snd,sprites,char_data):
     player=Player(char_data,sprites)
     bullets=[]; enemies=[]; gems=[]; floats=[]; particles=[]
     flames=[]; bolts=[]; chests=[]; rings=[]
-    capsules=[]
+    capsules=[]; sp_orbs=[]; minions=[]
     since_capsule = 0.0
     level=1; xp=0; xp_next=20
     elapsed=0.0; since_spawn=0.0; since_chest=40.0
-    boss_timer=120.0; boss_level=1; boss_warn=0.0; kills=0
-    VICTORY_TIME=600
+    boss_timer=120.0; boss_level=1; boss_warn=0.0; kills=0; score=0
+    boss_kills=0
+    VICTORY_TIME=300  # 5 minutes
+    godzilla_spawned=False; godzilla_warn=0.0
+    _vol_drag = None   # "bgm" or "sfx" while dragging slider
     shake=ScreenShake()
     state="play"; levelup_opts=[]; levelup_rects=[]; victory=False
     pause_rects={}
@@ -3146,6 +3926,9 @@ def run_game(snd,sprites,char_data):
     underground=False; surface_pos=(0.0,0.0); valley_ascend_immune=0.0
     ladders=[]; magma_spawn_cd=0.0
     cur_terrain=TERRAIN_GRASS; last_terrain=TERRAIN_GRASS; terrain_notify=0.0
+    # 死霊使いは初期から1体召喚
+    if player.necro_only:
+        minions.append(Minion(player.x+60, player.y, player.max_hp, 0))
     snd.start_bgm()
 
     while True:
@@ -3165,6 +3948,12 @@ def run_game(snd,sprites,char_data):
                             for en in new_evos:
                                 floats.append(FloatText(player.x,player.y-90,
                                     f"EVOLVED: {en}",(255,215,0),3.0))
+                if state=="play" and event.key in (pygame.K_SPACE, pygame.K_f):
+                    if player.sp >= player.sp_max:
+                        player.sp = 0.0; player.sp_ready = False
+                        ox2=player.x; oy2=player.y
+                        activate_sp_ultimate(player.char_name, player, enemies, floats, rings, particles, bullets, screen, ox2, oy2)
+                        snd.play("levelup"); shake.shake(12, 0.6)
                 if state=="play" and event.key==pygame.K_ESCAPE:
                     state="pause"; pygame.mixer.pause()
                 elif state=="pause":
@@ -3189,16 +3978,43 @@ def run_game(snd,sprites,char_data):
                                 floats.append(FloatText(player.x,player.y-90,
                                     f"EVOLVED: {en}",(255,215,0),3.0))
                 if state=="pause":
-                    if pause_rects.get("resume",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
+                    _nr = pause_rects
+                    if _nr.get("resume",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
                         state="play"; pygame.mixer.unpause()
-                    elif pause_rects.get("tree",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
+                    elif _nr.get("tree",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
                         state="tree"
-                    elif pause_rects.get("char_select",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
+                    elif _nr.get("char_select",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
                         snd.stop_bgm(); return "char_select"
-                    elif pause_rects.get("quit",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
+                    elif _nr.get("quit",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
                         snd.stop_bgm(); return "quit"
+                    # ── Volume: ◀▶ ボタン (+/-5%) ──
+                    elif _nr.get("bgm_lbtn",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
+                        snd.set_bgm_volume(_vol_bgm - 0.05)
+                    elif _nr.get("bgm_rbtn",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
+                        snd.set_bgm_volume(_vol_bgm + 0.05)
+                    elif _nr.get("sfx_lbtn",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
+                        snd.set_sfx_volume(_vol_sfx - 0.05)
+                    elif _nr.get("sfx_rbtn",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
+                        snd.set_sfx_volume(_vol_sfx + 0.05)
+                    # ── Volume: バークリックでジャンプ ──
+                    elif _nr.get("bgm_bar",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
+                        bar=_nr["bgm_bar"]
+                        snd.set_bgm_volume((mx-bar.x)/bar.w); _vol_drag="bgm"
+                    elif _nr.get("sfx_bar",pygame.Rect(0,0,0,0)).collidepoint(mx,my):
+                        bar=_nr["sfx_bar"]
+                        snd.set_sfx_volume((mx-bar.x)/bar.w); _vol_drag="sfx"
                 if state=="tree" and event.button==1:
                     state="pause"
+            if event.type==pygame.MOUSEBUTTONUP:
+                _vol_drag=None
+            if event.type==pygame.MOUSEMOTION and _vol_drag and state=="pause":
+                mx2,_=pygame.mouse.get_pos()
+                bar_key=f"{_vol_drag}_bar"
+                if pause_rects.get(bar_key):
+                    bar=pause_rects[bar_key]
+                    v=max(0.0,min(1.0,(mx2-bar.x)/bar.w))
+                    if _vol_drag=="bgm": snd.set_bgm_volume(v)
+                    else:               snd.set_sfx_volume(v)
 
         keys=pygame.key.get_pressed()
 
@@ -3213,13 +4029,31 @@ def run_game(snd,sprites,char_data):
                     rd = random.uniform(150, 350)
                     capsules.append(Capsule(player.x + math.cos(a) * rd, player.y + math.sin(a) * rd))
             if boss_warn>0: boss_warn-=dt
-            if elapsed>=VICTORY_TIME: state="gameover"; victory=True
+            if elapsed>=VICTORY_TIME:
+                score = kills*100 + boss_kills*500 + level*200
+                state="gameover"; victory=True
 
             if boss_timer<=10 and boss_warn<=0: boss_warn=boss_timer
             if boss_timer<=0:
                 enemies.append(spawn_boss(player.x,player.y,boss_level))
                 snd.play("boss"); shake.shake(8,0.5); boss_level+=1; boss_timer=120.0
                 floats.append(FloatText(player.x,player.y-80,"BOSS!",RED,2.0))
+
+            # ── Godzilla appears at 90 seconds remaining ──
+            remaining=VICTORY_TIME-elapsed
+            if not godzilla_spawned and remaining<=90.0:
+                if godzilla_warn<=0: godzilla_warn=5.0  # 5秒前警告
+            if godzilla_warn>0:
+                godzilla_warn-=dt
+                if godzilla_warn<=0 and not godzilla_spawned:
+                    godzilla_spawned=True
+                    a2=random.uniform(0,math.pi*2)
+                    gz=GodzillaEnemy(player.x+math.cos(a2)*900,
+                                     player.y+math.sin(a2)*900)
+                    enemies.append(gz)
+                    snd.play("boss"); shake.shake(20,1.5)
+                    floats.append(FloatText(player.x,player.y-120,
+                        "☢ ゴジラ出現！ ☢",(0,240,120),4.0))
 
             if since_chest>=60:
                 since_chest=0.0; a=random.uniform(0,math.pi*2); rd=random.uniform(150,350)
@@ -3281,7 +4115,10 @@ def run_game(snd,sprites,char_data):
             capsules=[cap for cap in capsules if cap.alive]
 
             since_spawn=maybe_spawn(player.x,player.y,elapsed,since_spawn,enemies,underground)
-            for e in enemies: e.update(dt,player.x,player.y)
+            for e in enemies:
+                e.update(dt,player.x,player.y)
+                if isinstance(e, GodzillaEnemy):
+                    e.update_beam(dt,player.x,player.y,enemies,player,floats,rings,particles)
 
             # Plague doctor instant-kill aura (1 tile = 80 units)
             if player.weapons.get("plague",{}).get("level",0)>=1:
@@ -3312,7 +4149,11 @@ def run_game(snd,sprites,char_data):
                     snd.play("kill")
                     for _ in range(8): particles.append(Particle(e.x,e.y,e.color))
                     rings.append(RingEffect(e.x,e.y,e.color,e.radius*2+10,3,0.3))
+                    # SP orb drop: 25% normal, 100% boss
+                    if isinstance(e,(Boss,GodzillaEnemy)) or random.random()<0.08:
+                        sp_orbs.append(SPOrb(e.x+random.uniform(-20,20), e.y+random.uniform(-20,20)))
                     if isinstance(e,Boss):
+                        boss_kills+=1
                         chests.append(Chest(e.x,e.y)); shake.shake(10,0.4)
                         floats.append(FloatText(e.x,e.y-60,"BOSS SLAIN!",GOLD,2.0))
                         for _ in range(20): particles.append(Particle(e.x,e.y,PURPLE))
@@ -3325,25 +4166,88 @@ def run_game(snd,sprites,char_data):
                     g.alive=False; xp+=g.value
             gems=[g for g in gems if g.alive]
 
+            for sp in sp_orbs:
+                sp.update(dt, player.x, player.y)
+                if dist((player.x,player.y),(sp.x,sp.y))<player.PICKUP_RANGE:
+                    sp.alive=False
+                    was_ready=player.sp>=player.sp_max
+                    player.sp=min(player.sp_max, player.sp+8.0)
+                    if player.sp>=player.sp_max and not was_ready:
+                        player.sp_ready=True
+                        floats.append(FloatText(player.x,player.y-80,"SP満タン！[SPACE]",(255,200,0),2.0))
+                        rings.append(RingEffect(player.x,player.y,(255,200,0),60,3,0.4))
+            sp_orbs=[sp for sp in sp_orbs if sp.alive]
+
             for c in chests:
                 c.update(dt)
                 if dist((player.x,player.y),(c.x,c.y))<player.radius+c.radius:
-                    c.alive=False; bonus=apply_chest_reward(player,c.reward["key"])
-                    if bonus: xp+=bonus
-                    floats.append(FloatText(player.x,player.y-50,c.reward["name"],GOLD,1.5))
-                    rings.append(RingEffect(player.x,player.y,GOLD,50,3,0.3))
-                    snd.play("chest")
+                    c.alive=False
+                    if player.necro_only:
+                        # 死霊使い専用チェスト: ランダムで死霊バフに変換
+                        _necro_buffs = [
+                            ("死霊HP回復",   lambda: [setattr(m,'hp',min(m.max_hp,m.hp+int(m.max_hp*0.5))) for m in minions]),
+                            ("死霊HP強化",   lambda: [setattr(m,'max_hp',int(m.max_hp*1.3)) or setattr(m,'hp',int(m.hp*1.3)) for m in minions]),
+                            ("死霊攻撃力UP", lambda: [setattr(m,'dmg',int(m.dmg*1.3)) for m in minions]),
+                            ("死霊速度UP",   lambda: [setattr(m,'speed',int(m.speed*1.2)) for m in minions]),
+                            ("HP回復",       lambda: setattr(player,'hp',min(player.max_hp,player.hp+60))),
+                        ]
+                        _bname, _bfn = random.choice(_necro_buffs)
+                        _bfn()
+                        floats.append(FloatText(player.x,player.y-50,_bname,(180,100,255),2.0))
+                        snd.play("necro_summon")
+                    else:
+                        bonus=apply_chest_reward(player,c.reward["key"])
+                        if bonus: xp+=bonus
+                        floats.append(FloatText(player.x,player.y-50,c.reward["name"],GOLD,1.5))
+                        snd.play("chest")
+                    rings.append(RingEffect(player.x,player.y,(180,100,255) if player.necro_only else GOLD,50,3,0.3))
             chests=[c for c in chests if c.alive]
 
             while xp>=xp_next:
                 xp-=xp_next; level+=1; xp_next=int(xp_next*1.25)
                 levelup_opts=pick_upgrades(player); state="levelup"; snd.play("levelup")
+                # 死霊使い: レベルに応じてミニオンを追加召喚
+                if player.necro_only:
+                    cap=minion_cap(level)
+                    spawned=0
+                    while len(minions)<cap:
+                        a=random.uniform(0,math.pi*2)
+                        mx=player.x+math.cos(a)*90; my=player.y+math.sin(a)*90
+                        minions.append(Minion(mx,my,player.max_hp,player.necro_level))
+                        floats.append(FloatText(mx,my-40,"死霊召喚！",(180,100,255),2.0))
+                        spawned+=1
+                    if spawned>0:
+                        snd.play("necro_summon")
+                    elif len(minions)>=MINION_MAX:
+                        # 上限到達後: 全ミニオンをバフ
+                        for m in minions:
+                            m.dmg   = int(m.dmg   * 1.25)
+                            m.speed = min(int(m.speed * 1.1), 320)
+                            m.max_hp= int(m.max_hp * 1.2)
+                            m.hp    = min(m.hp + int(m.max_hp*0.2), m.max_hp)
+                        floats.append(FloatText(player.x,player.y-60,"死霊強化！",(255,180,50),2.5))
+                        snd.play("necro_summon")
 
             for f in floats:    f.update(dt)
             for p in particles: p.update(dt)
             floats=[f for f in floats if f.alive]
             particles=[p for p in particles if p.alive]
-            if not player.alive: state="gameover"; victory=False
+            # ── ミニオン更新 ───────────────────────────────────────
+            for i, m in enumerate(minions):
+                m.update(dt, enemies, player, minions, i)
+                # 敵からミニオンへのダメージ
+                for e in enemies:
+                    if not e.alive: continue
+                    if math.hypot(e.x-m.x, e.y-m.y) < e.radius + 22:
+                        m.hp -= e.damage * dt
+                        m.hurt_flash = 0.15
+                if m.hp <= 0:
+                    m.alive = False
+                    floats.append(FloatText(m.x, m.y-30, "死霊消滅", (180,80,220), 1.5))
+            minions = [m for m in minions if m.alive]
+            if not player.alive:
+                score = kills*100 + boss_kills*500 + level*200
+                state="gameover"; victory=False
 
         sx_off,sy_off=shake.update(dt)
         ox=player.x+sx_off; oy=player.y+sy_off
@@ -3351,23 +4255,40 @@ def run_game(snd,sprites,char_data):
         # Ground-level effects (no depth sort needed)
         for f in flames:    f.draw(screen,ox,oy)
         for r in rings:     r.draw(screen,ox,oy)
+        # Godzilla beams (drawn over ground, under entities)
+        for e in enemies:
+            if isinstance(e, GodzillaEnemy) and e.active_beam:
+                e.active_beam.draw(screen, ox, oy)
         # Depth-sort all entities by (x+y) for correct isometric occlusion
         depth=[]
         for c in chests:    depth.append((c.x+c.y,'chest',c))
         for g in gems:      depth.append((g.x+g.y,'gem',g))
+        for sp in sp_orbs:  depth.append((sp.x+sp.y,'sp_orb',sp))
         for cap in capsules: depth.append((cap.x+cap.y,'capsule',cap))
         for e in enemies:   depth.append((e.x+e.y,'enemy',e))
         for b in bullets:   depth.append((b.x+b.y,'bullet',b))
         for p in particles: depth.append((p.x+p.y,'part',p))
         for l in ladders:   depth.append((l.x+l.y,'ladder',l))
+        for mn in minions:  depth.append((mn.x+mn.y,'minion',mn))
         depth.append((player.x+player.y,'player',player))
         depth.sort(key=lambda i:i[0])
         for _,etype,ent in depth:
-            if etype=='enemy': ent.draw(screen,ox,oy,sprites)
-            else:              ent.draw(screen,ox,oy)
+            if etype=='enemy':  ent.draw(screen,ox,oy,sprites)
+            elif etype=='minion': ent.draw(screen,ox,oy)
+            else:               ent.draw(screen,ox,oy)
         for bl in bolts:    bl.draw(screen,ox,oy)
         for ft in floats:   ft.draw(screen,ox,oy)
-        draw_hud(screen,player,level,xp,xp_next,elapsed,kills,boss_warn)
+        draw_hud(screen,player,level,xp,xp_next,elapsed,kills,boss_warn,VICTORY_TIME)
+        # Godzilla warning flash
+        if godzilla_warn>0 and not godzilla_spawned:
+            t_ms2=pygame.time.get_ticks()
+            pulse3=abs(math.sin(t_ms2/120))
+            gw=pygame.Surface((W,H),pygame.SRCALPHA)
+            gw.fill((0,180,40,int(25*pulse3)))
+            screen.blit(gw,(0,0))
+            wt=font_large.render("☢ ゴジラ接近中 ☢",True,(0,240,80))
+            wt.set_alpha(int(160+pulse3*95))
+            screen.blit(wt,(W//2-wt.get_width()//2,H//2-wt.get_height()//2))
         # Terrain HUD
         if state=="play":
             if terrain_notify>0:
@@ -3378,10 +4299,10 @@ def run_game(snd,sprites,char_data):
                     ts.set_alpha(min(255,int(255*terrain_notify/2.0)))
                     screen.blit(ts,(W//2-ts.get_width()//2,H-85))
             if underground:
-                us=font_med.render("─ UNDERGROUND ─",True,(140,80,255))
+                us=font_med.render("─ 地下 ─",True,(140,80,255))
                 screen.blit(us,(W//2-us.get_width()//2,18))
                 if ladders:
-                    hs=font_small.render("Find the green LADDER to return!",True,(80,220,80))
+                    hs=font_small.render("緑のはしごで地上へ戻れ！",True,(80,220,80))
                     screen.blit(hs,(W//2-hs.get_width()//2,58))
                     # Arrow pointing to ladder
                     l=ladders[0]
@@ -3408,7 +4329,7 @@ def run_game(snd,sprites,char_data):
                         ds=font_tiny.render(f"{wd}m",True,(60,240,80))
                         screen.blit(ds,(ax-ds.get_width()//2,ay-ds.get_height()-6))
         if state=="levelup":  levelup_rects=levelup_screen(screen,levelup_opts)
-        if state=="gameover": game_over_screen(screen,elapsed,kills,victory)
+        if state=="gameover": game_over_screen(screen,elapsed,kills,victory,score)
         if state=="pause":    pause_rects=pause_screen(screen)
         if state=="tree":     draw_evolution_tree(screen,player)
 
@@ -3431,7 +4352,7 @@ def run_game(snd,sprites,char_data):
 # ─────────────────────────────────────────────
 if __name__=="__main__":
     screen.fill(DARK)
-    screen.blit(font_med.render("Generating assets...",True,GRAY),(W//2-100,H//2-20))
+    screen.blit(font_med.render("アセット生成中...",True,GRAY),(W//2-90,H//2-20))
     pygame.display.flip()
     snd=SoundManager(); sprites=build_sprites()
     while True:
