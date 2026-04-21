@@ -4,6 +4,7 @@ import random
 import sys
 import os
 import array as arr
+import numpy as np
 
 pygame.init()
 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
@@ -119,10 +120,61 @@ _TERRAIN_TILES: dict = {}   # terrain_id → scaled pygame.Surface
 _AXE_IMG: pygame.Surface | None = None    # ax_transparent.png, loaded by build_sprites()
 _KYONSI_IMG: pygame.Surface | None = None # kyonsi_t.png, loaded by build_sprites()
 
-font_large = pygame.font.SysFont("meiryo", 52, bold=True)
-font_med   = pygame.font.SysFont("meiryo", 28)
-font_small = pygame.font.SysFont("meiryo", 18)
-font_tiny  = pygame.font.SysFont("meiryo", 14)
+# ── 炎動画フレーム ──────────────────────────────
+FLAME_FRAMES: list = []   # pygame.Surface list (SRCALPHA, brightness-as-alpha)
+FLAME_FPS: float  = 24.0
+
+# ── 魔法弾動画フレーム ──────────────────────────
+BULLET_FRAMES: list = []  # pygame.Surface list (SRCALPHA, brightness-as-alpha)
+BULLET_FPS: float   = 30.0
+_FLAME_VIDEO = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+    "nc471870_【フルHDループ素材】炎がメラメラ燃えるエフェクト素材用のテクスチャ背景動画（ループ素材）.mp4")
+_BULLET_VIDEO = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+    "nc131866_弾_弾道_銃弾_エフェクト_閃光.mp4")
+
+def _load_video_frames(path, size):
+    """共通: MP4フレームをSRCALPHAサーフェスリストとして返す（明るさ→アルファ）"""
+    import cv2
+    cap = cv2.VideoCapture(path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    frames = []
+    while True:
+        ret, bgr = cap.read()
+        if not ret:
+            break
+        rgb   = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        rgb   = cv2.resize(rgb, size, interpolation=cv2.INTER_LINEAR)
+        rgb_t = rgb.swapaxes(0, 1)
+        brightness = np.max(rgb_t, axis=2).astype(np.uint8)
+        srf = pygame.Surface(size, pygame.SRCALPHA)
+        srf.blit(pygame.surfarray.make_surface(rgb_t), (0, 0))
+        av = pygame.surfarray.pixels_alpha(srf)
+        av[:] = brightness
+        del av
+        frames.append(srf)
+    cap.release()
+    return fps, frames
+
+def _load_flame_video():
+    global FLAME_FRAMES, FLAME_FPS
+    try:
+        FLAME_FPS, FLAME_FRAMES = _load_video_frames(_FLAME_VIDEO, (256, 144))
+    except Exception as e:
+        print(f"[flame video] load error: {e}")
+
+def _load_bullet_video():
+    global BULLET_FRAMES, BULLET_FPS
+    try:
+        # 縦型 480x540 → 64x72 で読み込み（進行方向に回転して使用）
+        BULLET_FPS, BULLET_FRAMES = _load_video_frames(_BULLET_VIDEO, (64, 72))
+    except Exception as e:
+        print(f"[bullet video] load error: {e}")
+
+_YU_GOTH_B = "C:/Windows/Fonts/YuGothB.ttc"
+font_large = pygame.font.Font(_YU_GOTH_B, 52)
+font_med   = pygame.font.Font(_YU_GOTH_B, 28)
+font_small = pygame.font.Font(_YU_GOTH_B, 18)
+font_tiny  = pygame.font.Font(_YU_GOTH_B, 14)
 
 
 def dist(a, b):
@@ -1158,9 +1210,10 @@ class Bullet:
         self.speed=speed; self.damage=damage; self.radius=radius
         self.color=color; self.life=lifetime; self.pierce=pierce
         self.style=style; self.hit_ids=set(); self.alive=True
-        self.trail=[]
+        self.trail=[]; self._anim_t=0.0
 
     def update(self,dt):
+        self._anim_t+=dt
         self.trail.append((self.x,self.y))
         if len(self.trail)>8: self.trail=self.trail[-8:]
         self.x+=self.dx*self.speed*dt; self.y+=self.dy*self.speed*dt
@@ -1185,13 +1238,30 @@ class Bullet:
         cr,cg,cb=self.color
         r=self.radius
 
-        if self.style=="orb":          # Wand — glowing orb
-            gs=r+5; gsurf=pygame.Surface((gs*2,gs*2),pygame.SRCALPHA)
-            pygame.draw.circle(gsurf,(cr,cg,cb,55),(gs,gs),gs)
-            surf.blit(gsurf,(sx-gs,sy-gs))
-            pygame.draw.circle(surf,self.color,(sx,sy),r)
-            pygame.draw.circle(surf,WHITE,(sx,sy),max(1,r//2))
-            pygame.draw.circle(surf,(cr,cg,min(cb+40,255)),(sx,sy),r,1)
+        if self.style=="orb":          # Wand — 閃光動画 or fallback orb
+            if BULLET_FRAMES:
+                fi = int(self._anim_t * BULLET_FPS) % len(BULLET_FRAMES)
+                # 弾サイズに合わせてスケール: 幅=r*5, 高さ=r*7 (縦型比を維持)
+                bw = max(6, r * 5)
+                bh = max(7, r * 7)
+                scaled = pygame.transform.scale(BULLET_FRAMES[fi], (bw, bh))
+                # 進行方向に回転 (動画は縦=0°基準, 右=−90°)
+                angle_deg = -math.degrees(math.atan2(self.dy, self.dx)) - 90
+                rotated = pygame.transform.rotate(scaled, angle_deg)
+                rw2, rh2 = rotated.get_size()
+                # アルファにライフタイムフェードを適用
+                av = pygame.surfarray.pixels_alpha(rotated)
+                av[:] = (av * min(1.0, self.life * 3)).astype(np.uint8)
+                del av
+                surf.blit(rotated, (sx - rw2 // 2, sy - rh2 // 2),
+                          special_flags=pygame.BLEND_ADD)
+            else:
+                gs=r+5; gsurf=pygame.Surface((gs*2,gs*2),pygame.SRCALPHA)
+                pygame.draw.circle(gsurf,(cr,cg,cb,55),(gs,gs),gs)
+                surf.blit(gsurf,(sx-gs,sy-gs))
+                pygame.draw.circle(surf,self.color,(sx,sy),r)
+                pygame.draw.circle(surf,WHITE,(sx,sy),max(1,r//2))
+                pygame.draw.circle(surf,(cr,cg,min(cb+40,255)),(sx,sy),r,1)
 
         elif self.style=="cross":      # Cross — + shape
             pygame.draw.rect(surf,self.color,(sx-r,sy-2,r*2,4))
@@ -1255,7 +1325,10 @@ class FlameZone:
         self.x,self.y=x,y; self.radius=radius; self.damage=damage
         self.life=self.max_life=lifetime; self.hit_ids=set()
         self.tick=0.3; self.timer=0.0; self.alive=True
+        self._anim_t = 0.0   # アニメーション経過時間
+
     def update(self,dt,enemies,floats):
+        self._anim_t += dt
         self.life-=dt
         if self.life<=0: self.alive=False; return
         self.timer+=dt
@@ -1265,21 +1338,38 @@ class FlameZone:
             if dist((self.x,self.y),(e.x,e.y))<self.radius+e.radius:
                 e.hp-=self.damage; e.hit_flash=0.1; self.hit_ids.add(id(e))
                 floats.append(FloatText(e.x,e.y-20,str(int(self.damage)),ORANGE,0.5))
+
     def draw(self,surf,ox,oy):
-        alpha=int(180*self.life/self.max_life)
-        r=self.radius; sx,sy=iso_pos(self.x,self.y,2,ox,oy)
-        rw=max(2,int(r*2.0)); rh=max(1,int(r*0.7))
-        s=pygame.Surface((rw,rh),pygame.SRCALPHA)
-        pygame.draw.ellipse(s,(255,100,0,alpha),(0,0,rw,rh))
-        pygame.draw.ellipse(s,(255,200,0,alpha//2),(rw//4,rh//4,rw//2,rh//2))
-        surf.blit(s,(sx-rw//2,sy-rh//2))
-        # Flickering inner sparks
-        for _ in range(3):
-            a=random.uniform(0,math.pi*2); rd=random.uniform(0,r*0.7)
-            fx=int(sx+math.cos(a)*rd*1.3); fy=int(sy+math.sin(a)*rd*0.45)
-            fs=pygame.Surface((6,6),pygame.SRCALPHA)
-            pygame.draw.circle(fs,(255,220,50,alpha//2+60),(3,3),2)
-            surf.blit(fs,(fx-3,fy-3))
+        r  = self.radius
+        sx, sy = iso_pos(self.x, self.y, 2, ox, oy)
+        rw = max(4, int(r * 2.2))
+        rh = max(2, int(r * 0.78))
+        lifetime_ratio = max(0.0, self.life / self.max_life)
+
+        if FLAME_FRAMES:
+            fi      = int(self._anim_t * FLAME_FPS) % len(FLAME_FRAMES)
+            scaled  = pygame.transform.scale(FLAME_FRAMES[fi], (rw, rh))
+
+            # アルファ × ライフタイムフェード × 楕円グラデマスク
+            alpha_view = pygame.surfarray.pixels_alpha(scaled)
+            W_s, H_s   = alpha_view.shape
+            xs = np.linspace(-1.0, 1.0, W_s, dtype=np.float32)
+            ys = np.linspace(-1.0, 1.0, H_s, dtype=np.float32)
+            XX, YY = np.meshgrid(xs, ys, indexing='ij')
+            ell_mask = np.clip(1.3 - np.sqrt(XX**2 + YY**2) * 1.3, 0.0, 1.0)
+            alpha_view[:] = (alpha_view * ell_mask * lifetime_ratio).astype(np.uint8)
+            del alpha_view
+
+            surf.blit(scaled, (sx - rw // 2, sy - rh // 2),
+                      special_flags=pygame.BLEND_ADD)
+        else:
+            # フォールバック（動画なし）
+            alpha = int(180 * lifetime_ratio)
+            s = pygame.Surface((rw, rh), pygame.SRCALPHA)
+            pygame.draw.ellipse(s, (255, 100, 0, alpha), (0, 0, rw, rh))
+            pygame.draw.ellipse(s, (255, 200, 0, alpha // 2),
+                                (rw // 4, rh // 4, rw // 2, rh // 2))
+            surf.blit(s, (sx - rw // 2, sy - rh // 2))
 
 
 def _jitter_pts(p1,p2,segs=5,jitter=12):
@@ -2094,9 +2184,6 @@ class GodzillaEnemy(Boss):
         pygame.draw.rect(surf, (20,200,40),(gsx-150, bar_y, int(bw*ratio), 14))
         pygame.draw.rect(surf, (0,255,90), (gsx-150, bar_y, int(bw*ratio), 5))
         t_ms2 = pygame.time.get_ticks()
-        lbl = font_med.render("☢ ゴジラ ☢", True, (0,240,120))
-        lbl.set_alpha(int(200+abs(math.sin(t_ms2/300))*55))
-        surf.blit(lbl, (gsx-lbl.get_width()//2, bar_y-30))
 
 
 # ─────────────────────────────────────────────
@@ -4424,7 +4511,7 @@ def run_game(snd,sprites,char_data):
                     enemies.append(gz)
                     snd.play("boss"); shake.shake(20,1.5)
                     floats.append(FloatText(player.x,player.y-120,
-                        "☢ ゴジラ出現！ ☢",(0,240,120),4.0))
+                        "☢ ？？？出現！ ☢",(0,240,120),4.0))
 
             if since_chest>=60:
                 since_chest=0.0; a=random.uniform(0,math.pi*2); rd=random.uniform(150,350)
@@ -4682,7 +4769,7 @@ def run_game(snd,sprites,char_data):
             gw=pygame.Surface((W,H),pygame.SRCALPHA)
             gw.fill((0,180,40,int(25*pulse3)))
             screen.blit(gw,(0,0))
-            wt=font_large.render("☢ ゴジラ接近中 ☢",True,(0,240,80))
+            wt=font_large.render("☢ ？？？接近中 ☢",True,(0,240,80))
             wt.set_alpha(int(160+pulse3*95))
             screen.blit(wt,(W//2-wt.get_width()//2,H//2-wt.get_height()//2))
         # Terrain HUD
@@ -4751,57 +4838,50 @@ def run_game(snd,sprites,char_data):
 # ─────────────────────────────────────────────
 
 def opening_screen(surf):
-    """タイトル・オープニング画面。ENTERまたはクリックで次へ。"""
+    """オープニング画面。モザイクタイル背景 + 中央ENTER。"""
     clock2 = pygame.time.Clock()
     t0 = pygame.time.get_ticks()
 
-    # 流れる星パーティクル
-    class Star:
-        def __init__(self):
-            self.reset(born=True)
-        def reset(self, born=False):
-            self.x = random.uniform(0, W)
-            self.y = random.uniform(0, H) if born else -4.0
-            self.vy = random.uniform(30, 110)
-            self.r  = random.uniform(1.0, 2.5)
-            self.alpha = random.randint(80, 200)
-        def update(self, dt):
-            self.y += self.vy * dt
-            if self.y > H + 8: self.reset()
-        def draw(self, s):
-            a = int(self.alpha)
-            ss = pygame.Surface((int(self.r)*2+2, int(self.r)*2+2), pygame.SRCALPHA)
-            pygame.draw.circle(ss, (180, 220, 255, a), (int(self.r)+1, int(self.r)+1), int(self.r))
-            s.blit(ss, (int(self.x)-int(self.r)-1, int(self.y)-int(self.r)-1))
+    TILE = 56
+    COLS = W // TILE + 2
+    ROWS = H // TILE + 2
 
-    stars = [Star() for _ in range(120)]
-
-    STORY = [
-        "西暦2089年。新型ウイルスの大量変異により",
-        "人類は滅亡の危機に瀕していた。",
-        "",
-        "最後の希望は、特殊能力を持つ数人の戦士——",
-        "彼らを「POWER SURGE」と呼ぶ。",
+    rng = random.Random(7)
+    PALETTES = [
+        (8,  18, 42),
+        (18, 8,  42),
+        (8,  38, 22),
+        (38, 8,  18),
+        (8,  32, 40),
+        (28, 8,  36),
     ]
+    tile_pal   = [[rng.choice(PALETTES)         for _ in range(COLS)] for _ in range(ROWS)]
+    tile_phase = [[rng.uniform(0, math.pi * 2)  for _ in range(COLS)] for _ in range(ROWS)]
+    tile_speed = [[rng.uniform(0.35, 1.1)       for _ in range(COLS)] for _ in range(ROWS)]
 
-    font_title = pygame.font.SysFont("meiryo", 72, bold=True)
+    scroll_x = 0.0
+    scroll_y = 0.0
+    RIPPLE_INTERVAL = 2.8
 
-    phase = "fadein"   # fadein → main → fadeout
-    fade_alpha = 0
+    phase = "fadein"
+    fade_alpha = 255
     fade_surf = pygame.Surface((W, H))
     fade_surf.fill((0, 0, 0))
 
-    story_timer = 0.0
-    story_visible = 0   # 何行表示したか
-
     blink = 0.0
-    done = False
+    scan_y = 0.0          # スキャンライン Y
+    done  = False
+
+    font_enter = pygame.font.Font(_YU_GOTH_B, 108)
 
     while not done:
-        dt = min(clock2.tick(60) / 1000.0, 0.05)
-        t_ms = pygame.time.get_ticks() - t0
-        story_timer += dt
+        dt     = min(clock2.tick(60) / 1000.0, 0.05)
+        t_ms   = pygame.time.get_ticks() - t0
+        t_sec  = t_ms / 1000.0
         blink += dt
+        scroll_x += 14 * dt
+        scroll_y += 22 * dt
+        scan_y = (scan_y + H * 0.18 * dt) % H
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -4815,75 +4895,82 @@ def opening_screen(surf):
                 if phase == "main":
                     phase = "fadeout"; fade_alpha = 0
 
-        # フェーズ処理
         if phase == "fadein":
-            fade_alpha = max(0, fade_alpha - 320 * dt)
+            fade_alpha = max(0, fade_alpha - 300 * dt)
             if fade_alpha <= 0:
                 phase = "main"
         elif phase == "fadeout":
-            fade_alpha = min(255, fade_alpha + 340 * dt)
+            fade_alpha = min(255, fade_alpha + 360 * dt)
             if fade_alpha >= 255:
                 done = True
 
-        # ── 背景 ──
-        surf.fill((4, 2, 12))
-        # グリッド（遠景）
-        step = 90
-        grid_alpha_s = pygame.Surface((W, H), pygame.SRCALPHA)
-        for gx in range(0, W + step, step):
-            pygame.draw.line(grid_alpha_s, (20, 12, 38, 80), (gx, 0), (gx, H))
-        for gy in range(0, H + step, step):
-            pygame.draw.line(grid_alpha_s, (20, 12, 38, 80), (0, gy), (W, gy))
-        surf.blit(grid_alpha_s, (0, 0))
+        # ── モザイクタイル背景 ──
+        surf.fill((2, 2, 8))
+        ox = int(scroll_x) % TILE
+        oy = int(scroll_y) % TILE
 
-        # 星
-        for st in stars:
-            st.update(dt)
-            st.draw(surf)
+        rw = (t_sec % RIPPLE_INTERVAL) / RIPPLE_INTERVAL
+        ripple_r = rw * math.sqrt(W * W + H * H) * 0.65
 
-        # ── タイトルロゴ ──
-        pulse = abs(math.sin(t_ms * 0.0018)) * 0.25 + 0.75
-        title_col = (int(0 * pulse), int(220 * pulse), int(100 * pulse))
-        shadow_col = (0, 80, 30)
+        for row in range(ROWS):
+            for col in range(COLS):
+                tx = col * TILE - ox
+                ty = row * TILE - oy
+                if tx + TILE < 0 or ty + TILE < 0 or tx >= W or ty >= H:
+                    continue
 
-        title_s = font_title.render("POWER  SURGE", True, title_col)
-        tw, th_t = title_s.get_width(), title_s.get_height()
-        tx = W // 2 - tw // 2
-        ty = 130
+                pulse = (math.sin(t_sec * tile_speed[row][col] + tile_phase[row][col]) + 1) * 0.5
+                cx_t  = tx + TILE // 2
+                cy_t  = ty + TILE // 2
+                dist  = math.hypot(cx_t - W // 2, cy_t - H // 2)
+                ring  = max(0.0, 1.0 - abs(dist - ripple_r) / 70.0) * (1.0 - rw) * 2.2
 
-        # グロー
-        glow = pygame.Surface((tw + 80, th_t + 40), pygame.SRCALPHA)
-        pygame.draw.rect(glow, (*title_col, 30), (0, 0, tw + 80, th_t + 40), border_radius=18)
-        surf.blit(glow, (tx - 40, ty - 20))
+                bc = tile_pal[row][col]
+                r  = min(255, int(bc[0] * (0.4 + pulse * 0.6) + ring * 50))
+                g  = min(255, int(bc[1] * (0.4 + pulse * 0.6) + ring * 200))
+                b  = min(255, int(bc[2] * (0.4 + pulse * 0.6) + ring * 90))
+                pygame.draw.rect(surf, (r, g, b), (tx, ty, TILE - 2, TILE - 2))
 
-        # シャドウ
-        shad = font_title.render("POWER  SURGE", True, shadow_col)
-        surf.blit(shad, (tx + 4, ty + 5))
-        surf.blit(title_s, (tx, ty))
+        # ビネット（中央を少し明るく見せる）
+        ov = pygame.Surface((W, H), pygame.SRCALPHA)
+        ov.fill((0, 0, 0, 150))
+        surf.blit(ov, (0, 0))
 
-        # サブタイトル
-        sub = font_med.render("─ ウイルス殲滅RPG ─", True, (120, 110, 160))
-        surf.blit(sub, (W // 2 - sub.get_width() // 2, ty + th_t + 14))
+        # スキャンライン
+        sl = pygame.Surface((W, 3), pygame.SRCALPHA)
+        sl.fill((0, 255, 120, 18))
+        surf.blit(sl, (0, int(scan_y)))
 
-        # ── ストーリーテキスト ──
-        story_visible = min(len(STORY), int(story_timer / 0.6))
-        for li, line in enumerate(STORY[:story_visible]):
-            alpha = min(255, int((story_timer - li * 0.6) * 500))
-            if not line:
-                continue
-            col_s = (200, 190, 220)
-            ls = font_small.render(line, True, col_s)
-            ls.set_alpha(alpha)
-            ly = ty + th_t + 80 + li * 30
-            surf.blit(ls, (W // 2 - ls.get_width() // 2, ly))
+        # ── 中央 ENTER ──
+        if phase == "main":
+            pe = (math.sin(blink * 2.0) + 1) * 0.5
+            gc = (int(10 + pe * 20), int(215 + pe * 40), int(85 + pe * 45))
 
-        # ── "ENTER で開始" 点滅 ──
-        if story_visible >= len(STORY) and phase == "main":
-            if int(blink * 2) % 2 == 0:
-                enter_s = font_med.render("[ ENTER ] または クリック  で開始", True, NEON_G)
-                surf.blit(enter_s, (W // 2 - enter_s.get_width() // 2, H - 120))
-            esc_s = font_tiny.render("[ ESC ] 終了", True, (70, 65, 90))
-            surf.blit(esc_s, (W // 2 - esc_s.get_width() // 2, H - 80))
+            enter_s = font_enter.render("ENTER", True, gc)
+            ew, eh  = enter_s.get_size()
+            ex = W // 2 - ew // 2
+            ey = H // 2 - eh // 2
+
+            # グロー（多重楕円）
+            gsurf = pygame.Surface((ew + 120, eh + 70), pygame.SRCALPHA)
+            for gi in range(5, 0, -1):
+                ga = int((8 + pe * 14) * gi // 5)
+                pygame.draw.ellipse(gsurf, (*gc, ga),
+                    (gi * 10, gi * 6, ew + 120 - gi * 20, eh + 70 - gi * 12))
+            surf.blit(gsurf, (ex - 60, ey - 35))
+
+            # テキスト本体
+            surf.blit(enter_s, (ex, ey))
+
+            # 下線（アクセント）
+            lw = ew + 40
+            pygame.draw.line(surf, gc,
+                (W // 2 - lw // 2, ey + eh + 8),
+                (W // 2 + lw // 2, ey + eh + 8), 2)
+
+            # ESC ヒント
+            esc_s = font_tiny.render("[ ESC ] 終了", True, (55, 50, 75))
+            surf.blit(esc_s, (W // 2 - esc_s.get_width() // 2, H - 48))
 
         # フェードオーバーレイ
         if fade_alpha > 0:
@@ -5065,6 +5152,11 @@ if __name__=="__main__":
     screen.blit(font_med.render("アセット生成中...",True,GRAY),(W//2-90,H//2-20))
     pygame.display.flip()
     snd=SoundManager(); sprites=build_sprites()
+    screen.fill(DARK)
+    screen.blit(font_med.render("エフェクト読み込み中...",True,GRAY),(W//2-100,H//2-20))
+    pygame.display.flip()
+    _load_flame_video()
+    _load_bullet_video()
     opening_screen(screen)
     tutorial_screen(screen)
     while True:
