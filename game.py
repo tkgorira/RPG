@@ -1117,6 +1117,25 @@ class RingEffect:
         surf.blit(s,(sx-rw//2-2,sy-rh//2-2))
 
 
+class ScreenFlash:
+    """Full-screen color overlay for SP ultimate activation."""
+    def __init__(self, color, life=0.55, max_alpha=180):
+        self.color = color
+        self.life = self.max_life = life
+        self.max_alpha = max_alpha
+        self.alive = True
+    def update(self, dt):
+        self.life -= dt
+        if self.life <= 0: self.alive = False
+    def draw(self, surf):
+        prog = self.life / self.max_life
+        alpha = int(self.max_alpha * prog ** 0.6)
+        s = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
+        r, g, b = self.color
+        s.fill((r, g, b, alpha))
+        surf.blit(s, (0, 0))
+
+
 class ScreenShake:
     def __init__(self): self.timer=0.0; self.strength=0.0
     def shake(self,strength,duration=0.25):
@@ -1620,6 +1639,34 @@ class FloatText:
         sx,sy=iso_pos(self.x,self.y,50,ox,oy)
         s=font_small.render(self.text,True,self.color); s.set_alpha(alpha)
         surf.blit(s,(sx-s.get_width()//2,sy))
+
+
+class BigFloatText:
+    """Large scale-in skill name text — for SP ultimate announcements."""
+    def __init__(self, x, y, text, color, life=2.8):
+        self.x, self.y = x, y
+        self.text = text; self.color = color
+        self.life = self.max_life = life; self.alive = True
+        self._scale = 0.05
+    def update(self, dt):
+        self.y -= 18 * dt
+        self._scale = min(1.0, self._scale + dt * 7)
+        self.life -= dt
+        if self.life <= 0: self.alive = False
+    def draw(self, surf, ox, oy):
+        prog = self.life / self.max_life
+        alpha = int(255 * min(1.0, prog * 2.5))
+        sx, sy = iso_pos(self.x, self.y, 90, ox, oy)
+        base = font_large.render(self.text, True, self.color)
+        w = max(1, int(base.get_width() * self._scale))
+        h = max(1, int(base.get_height() * self._scale))
+        scaled = pygame.transform.smoothscale(base, (w, h))
+        shadow = font_large.render(self.text, True, (0, 0, 0))
+        shadow_s = pygame.transform.smoothscale(shadow, (w, h))
+        shadow_s.set_alpha(alpha // 2)
+        scaled.set_alpha(alpha)
+        surf.blit(shadow_s, (sx - w // 2 + 3, sy - h // 2 + 3))
+        surf.blit(scaled, (sx - w // 2, sy - h // 2))
 
 
 # ─────────────────────────────────────────────
@@ -3826,67 +3873,342 @@ def draw_bg(surf, ox, oy, terrain_map=None, underground=False, player_wx=0.0, pl
 
 
 # ─────────────────────────────────────────────
+# SP Ultimate visual effect classes
+# ─────────────────────────────────────────────
+
+class MeteorEffect:
+    """Fireball falling from sky → impact explosion. For Mage SP."""
+    def __init__(self, x, y, particles, rings):
+        self.x = x + random.uniform(-160, 160)
+        self.y = y + random.uniform(-160, 160)
+        self.z = random.uniform(420, 600)
+        self.vz = -random.uniform(340, 480)
+        self.life = self.max_life = 2.0
+        self.alive = True
+        self.exploded = False
+        self._exp_life = 0.0
+        self._particles = particles
+        self._rings = rings
+        self.trail = []
+
+    def update(self, dt):
+        if self.exploded:
+            self._exp_life -= dt
+            if self._exp_life <= 0: self.alive = False
+            return
+        self.z += self.vz * dt
+        self.trail.append((self.x, self.y, max(0, self.z)))
+        if len(self.trail) > 14: self.trail = self.trail[-14:]
+        if self.z <= 0:
+            self.z = 0
+            self.exploded = True
+            self._exp_life = 0.45
+            for _ in range(50): self._particles.append(Particle(self.x, self.y, (255, 140, 20)))
+            for _ in range(25): self._particles.append(Particle(self.x, self.y, (255, 230, 80)))
+            self._rings.append(RingEffect(self.x, self.y, (255, 100, 0), 240, 10, 0.5))
+            self._rings.append(RingEffect(self.x, self.y, (255, 220, 60), 120, 6, 0.35))
+        self.life -= dt
+        if self.life <= 0 and not self.exploded: self.alive = False
+
+    def draw(self, surf, ox, oy):
+        if self.exploded:
+            alpha = int(200 * max(0, self._exp_life / 0.45))
+            sx, sy = iso_pos(self.x, self.y, 2, ox, oy)
+            s = pygame.Surface((100, 100), pygame.SRCALPHA)
+            pygame.draw.circle(s, (255, 160, 0, alpha), (50, 50), 42)
+            pygame.draw.circle(s, (255, 240, 120, alpha), (50, 50), 22)
+            pygame.draw.circle(s, (255, 255, 200, min(255, alpha + 40)), (50, 50), 10)
+            surf.blit(s, (sx - 50, sy - 50))
+            return
+        for i, (tx, ty, tz) in enumerate(self.trail):
+            frac = (i + 1) / len(self.trail)
+            alpha = int(220 * frac)
+            r = max(2, int(12 * frac))
+            tsx, tsy = iso_pos(tx, ty, tz, ox, oy)
+            s = pygame.Surface((r*2+2, r*2+2), pygame.SRCALPHA)
+            col = (255, int(100 + 130 * frac), 0, alpha)
+            pygame.draw.circle(s, col, (r+1, r+1), r)
+            surf.blit(s, (tsx - r - 1, tsy - r - 1))
+        sx, sy = iso_pos(self.x, self.y, self.z, ox, oy)
+        s = pygame.Surface((36, 36), pygame.SRCALPHA)
+        pygame.draw.circle(s, (255, 80, 0, 230), (18, 18), 16)
+        pygame.draw.circle(s, (255, 240, 180, 255), (18, 18), 8)
+        surf.blit(s, (sx - 18, sy - 18))
+
+
+class SwordSlash:
+    """Golden arc slash for Knight SP."""
+    def __init__(self, x, y, angle, length=140):
+        self.x, self.y = x, y
+        self.angle = angle
+        self.length = length
+        self.life = self.max_life = 0.55
+        self.alive = True
+
+    def update(self, dt):
+        self.life -= dt
+        if self.life <= 0: self.alive = False
+
+    def draw(self, surf, ox, oy):
+        alpha = int(255 * (self.life / self.max_life) ** 0.5)
+        n = 16
+        pts = []
+        for i in range(n + 1):
+            t = i / n
+            a = self.angle - 0.7 + t * 1.4
+            r = self.length * (0.4 + t * 0.6)
+            wx = self.x + math.cos(a) * r
+            wy = self.y + math.sin(a) * r
+            pts.append(iso_pos(wx, wy, 20 + t * 60, ox, oy))
+        if len(pts) >= 2:
+            s = pygame.Surface((W, H), pygame.SRCALPHA)
+            pygame.draw.lines(s, (255, 240, 100, alpha), False, pts, 5)
+            pygame.draw.lines(s, (255, 255, 220, alpha // 2), False, pts, 2)
+            surf.blit(s, (0, 0))
+
+
+class PoisonCloud:
+    """Expanding toxic cloud for Rogue SP."""
+    def __init__(self, x, y):
+        self.x = x + random.uniform(-60, 60)
+        self.y = y + random.uniform(-60, 60)
+        self.life = self.max_life = random.uniform(1.0, 1.6)
+        self.alive = True
+        self.max_r = random.uniform(120, 200)
+        self._phase = random.uniform(0, math.pi * 2)
+
+    def update(self, dt):
+        self.life -= dt
+        if self.life <= 0: self.alive = False
+
+    def draw(self, surf, ox, oy):
+        prog = 1 - self.life / self.max_life
+        r = max(4, int(self.max_r * (prog ** 0.5)))
+        alpha = int(110 * (self.life / self.max_life))
+        sx, sy = iso_pos(self.x, self.y, 10, ox, oy)
+        rw = max(2, r * 2); rh = max(1, int(r * 0.65))
+        t_ms = pygame.time.get_ticks() * 0.001
+        for j in range(3):
+            joff = int(math.sin(t_ms * 2 + self._phase + j) * 6)
+            s = pygame.Surface((rw + 24, rh + 24), pygame.SRCALPHA)
+            fade = max(0, alpha - j * 30)
+            col = (40 + j*10, 200 - j*20, 20 + j*10, fade)
+            pygame.draw.ellipse(s, col, (j*4, j*3 + joff, rw + 24 - j*8, rh + 24 - j*6), 0)
+            surf.blit(s, (sx - rw//2 - 12, sy - rh//2 - 12))
+
+
+class SkullFloat:
+    """Rising death skull for Plague Dr SP."""
+    def __init__(self, x, y):
+        self.x = x + random.uniform(-180, 180)
+        self.y = y + random.uniform(-180, 180)
+        self.z = random.uniform(0, 30)
+        self.vz = random.uniform(55, 110)
+        self.life = self.max_life = random.uniform(0.9, 1.8)
+        self.alive = True
+        self._spin = random.uniform(-2.0, 2.0)
+        self._angle = random.uniform(0, math.pi * 2)
+        self._r = random.randint(10, 16)
+
+    def update(self, dt):
+        self.z += self.vz * dt
+        self._angle += self._spin * dt
+        self.life -= dt
+        if self.life <= 0: self.alive = False
+
+    def draw(self, surf, ox, oy):
+        alpha = int(255 * (self.life / self.max_life) ** 0.6)
+        sx, sy = iso_pos(self.x, self.y, self.z, ox, oy)
+        r = self._r
+        s = pygame.Surface((r * 3 + 4, r * 3 + 4), pygame.SRCALPHA)
+        cx, cy = r + 2, r + 2
+        pygame.draw.circle(s, (190, 0, 255, alpha), (cx, cy), r)
+        pygame.draw.circle(s, (230, 180, 255, alpha // 2), (cx, cy - r//3), r // 2)
+        pygame.draw.circle(s, (0, 0, 0, alpha), (cx - r//3, cy), r//4)
+        pygame.draw.circle(s, (0, 0, 0, alpha), (cx + r//3, cy), r//4)
+        surf.blit(s, (sx - cx, sy - cy))
+
+
+class VoidSingularity:
+    """Expanding void ring that collapses for Valley Wraith SP."""
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+        self.life = self.max_life = 1.8
+        self.alive = True
+
+    def update(self, dt):
+        self.life -= dt
+        if self.life <= 0: self.alive = False
+
+    def draw(self, surf, ox, oy):
+        prog = 1 - self.life / self.max_life
+        # expand 0→0.45, hold 0.45→0.6, collapse 0.6→1.0
+        if prog < 0.45:
+            r = int(500 * prog / 0.45)
+        elif prog < 0.6:
+            r = 500
+        else:
+            r = int(500 * (1 - (prog - 0.6) / 0.4))
+        r = max(4, r)
+        alpha = int(200 * (self.life / self.max_life) ** 0.5)
+        sx, sy = iso_pos(self.x, self.y, 4, ox, oy)
+        for i in range(5):
+            ri = max(2, r - i * (r // 6))
+            rw = max(2, ri * 2); rh = max(1, int(ri * 0.65))
+            fade = max(0, alpha - i * 30)
+            col = (max(0, 60 - i*10), 0, min(255, 180 + i*15), fade)
+            s = pygame.Surface((rw + 4, rh + 4), pygame.SRCALPHA)
+            pygame.draw.ellipse(s, col, (0, 0, rw + 4, rh + 4), max(1, 4 - i))
+            surf.blit(s, (sx - rw//2 - 2, sy - rh//2 - 2))
+
+
+# ─────────────────────────────────────────────
 # SP Ultimate skills (per character)
 # ─────────────────────────────────────────────
-def activate_sp_ultimate(char_name, player, enemies, floats, rings, particles, bullets, screen, ox, oy):
+def activate_sp_ultimate(char_name, player, enemies, floats, rings, particles, bullets, screen, ox, oy, shake=None, flashes=None, sp_effects=None, bolts=None):
     """SP必殺技。雑魚は一撃、ボス/ゴジラにはダメージのみ。"""
     spr_bolts = []
 
     def _is_boss(e):
         return isinstance(e, (Boss, GodzillaEnemy))
 
+    def _burst(x, y, color, n=80):
+        for _ in range(n): particles.append(Particle(x, y, color))
+
+    def _rings(x, y, color, n=5, base_r=200, width=8):
+        for i in range(n):
+            rings.append(RingEffect(x, y, color, base_r + i*220, width - i, 0.55 + i*0.12))
+
+    def _enemy_fx(e, color, pcount=14, ring_w=5):
+        e.hit_flash = 0.45
+        rings.append(RingEffect(e.x, e.y, color, e.radius*4, ring_w, 0.45))
+        rings.append(RingEffect(e.x, e.y, (255,255,255), e.radius*2, 3, 0.25))
+        for _ in range(pcount): particles.append(Particle(e.x, e.y, color))
+
     if char_name == "Knight":
+        col = (255, 210, 60)
+        if flashes is not None: flashes.append(ScreenFlash((200, 150, 20), 0.55, 170))
+        _burst(player.x, player.y, col, 100)
+        _burst(player.x, player.y, (255, 255, 200), 40)
+        _rings(player.x, player.y, col, 5, 150, 9)
+        # 8方向に剣閃エフェクト
+        if sp_effects is not None:
+            for i in range(8):
+                angle = i * math.pi / 4
+                sp_effects.append(SwordSlash(player.x, player.y, angle, 150))
+            for i in range(8):
+                angle = i * math.pi / 4 + math.pi / 8
+                sp_effects.append(SwordSlash(player.x, player.y, angle, 110))
         for e in enemies:
             if _is_boss(e): e.hp -= 800
             else:           e.hp  = 0
-            e.hit_flash = 0.3
-            rings.append(RingEffect(e.x, e.y, (220,160,40), e.radius*3, 4, 0.35))
-            for _ in range(5): particles.append(Particle(e.x, e.y, (255,200,50)))
-        rings.append(RingEffect(player.x, player.y, (255,200,50), 800, 6, 0.6))
-        floats.append(FloatText(player.x, player.y-100, "⚔ WAR CRY! ⚔", (255,200,50), 2.5))
+            _enemy_fx(e, col)
+            # 敵位置にも剣閃
+            if sp_effects is not None:
+                a = math.atan2(e.y - player.y, e.x - player.x)
+                sp_effects.append(SwordSlash(e.x, e.y, a, 100))
+        floats.append(BigFloatText(player.x, player.y-80, "⚔ WAR CRY! ⚔", col))
+        if shake: shake.shake(30, 1.1)
 
     elif char_name == "Mage":
+        col = (255, 90, 10)
+        if flashes is not None: flashes.append(ScreenFlash((200, 60, 0), 0.55, 170))
+        _burst(player.x, player.y, col, 80)
+        _burst(player.x, player.y, (255, 200, 100), 30)
+        _rings(player.x, player.y, col, 4, 150, 9)
+        # 隕石を16個降らせる（敵位置 + ランダム）
+        if sp_effects is not None:
+            for e in enemies:
+                sp_effects.append(MeteorEffect(e.x, e.y, particles, rings))
+            for _ in range(max(0, 16 - len(enemies))):
+                sp_effects.append(MeteorEffect(player.x, player.y, particles, rings))
         for e in enemies:
             if _is_boss(e): e.hp -= 800
             else:           e.hp  = 0
-            e.hit_flash = 0.3
-            for _ in range(6): particles.append(Particle(e.x, e.y, (255,80,10)))
-            rings.append(RingEffect(e.x, e.y, (255,80,10), e.radius*4, 3, 0.4))
-        rings.append(RingEffect(player.x, player.y, (255,100,20), 600, 5, 0.5))
-        floats.append(FloatText(player.x, player.y-100, "☄ METEOR RAIN! ☄", (255,100,0), 2.5))
+            _enemy_fx(e, col)
+        floats.append(BigFloatText(player.x, player.y-80, "☄ METEOR RAIN! ☄", (255, 120, 0)))
+        if shake: shake.shake(28, 1.0)
 
     elif char_name == "Rogue":
+        col = (80, 230, 40)
+        if flashes is not None: flashes.append(ScreenFlash((20, 150, 0), 0.55, 160))
+        _burst(player.x, player.y, col, 80)
+        _rings(player.x, player.y, col, 5, 150, 9)
+        for _ in range(60):
+            a = random.uniform(0, math.pi*2); r2 = random.uniform(40, 500)
+            particles.append(Particle(player.x+math.cos(a)*r2, player.y+math.sin(a)*r2, col))
+        # 毒ガスクラウドを多数生成
+        if sp_effects is not None:
+            for _ in range(14):
+                sp_effects.append(PoisonCloud(player.x, player.y))
+            for e in enemies:
+                sp_effects.append(PoisonCloud(e.x, e.y))
         for e in enemies:
             if _is_boss(e): e.hp -= 700
             else:           e.hp  = 0
-            e.hit_flash = 0.3
-            rings.append(RingEffect(e.x, e.y, (80,220,30), e.radius*2+6, 3, 0.35))
-        rings.append(RingEffect(player.x, player.y, (80,200,20), 700, 5, 0.7))
-        for _ in range(30):
-            a = random.uniform(0, math.pi*2); r2 = random.uniform(50, 400)
-            particles.append(Particle(player.x+math.cos(a)*r2, player.y+math.sin(a)*r2, (60,200,20)))
-        floats.append(FloatText(player.x, player.y-100, "☠ POISON MIST! ☠", (80,220,30), 2.5))
+            _enemy_fx(e, col)
+        floats.append(BigFloatText(player.x, player.y-80, "☠ POISON MIST! ☠", col))
+        if shake: shake.shake(26, 1.0)
 
     elif char_name == "Plague Dr":
+        col = (170, 0, 255)
+        if flashes is not None: flashes.append(ScreenFlash((100, 0, 180), 0.6, 175))
+        _burst(player.x, player.y, col, 90)
+        _burst(player.x, player.y, (220, 100, 255), 35)
+        _rings(player.x, player.y, col, 5, 150, 10)
+        # 死のドクロを大量に浮かび上がらせる
+        if sp_effects is not None:
+            for _ in range(30):
+                sp_effects.append(SkullFloat(player.x, player.y))
+            for e in enemies:
+                for _ in range(4):
+                    sp_effects.append(SkullFloat(e.x, e.y))
         for e in enemies:
             if _is_boss(e): e.hp -= 900
             else:           e.hp  = 0
-            e.hit_flash = 0.3
-            rings.append(RingEffect(e.x, e.y, (140,0,220), e.radius*2+8, 2, 0.22))
-        rings.append(RingEffect(player.x, player.y, (160,0,255), 900, 6, 0.8))
-        floats.append(FloatText(player.x, player.y-100, "✝ BLACK DEATH! ✝", (160,0,255), 2.5))
+            _enemy_fx(e, col, ring_w=6)
+        floats.append(BigFloatText(player.x, player.y-80, "✝ BLACK DEATH! ✝", col))
+        if shake: shake.shake(32, 1.2)
 
     elif char_name == "Lightning Mage":
+        col = (0, 230, 255)
+        if flashes is not None: flashes.append(ScreenFlash((0, 160, 200), 0.5, 165))
+        _burst(player.x, player.y, col, 90)
+        _burst(player.x, player.y, (200, 240, 255), 40)
+        _rings(player.x, player.y, col, 5, 150, 9)
+        # 各敵に空から雷3連撃
+        if bolts is not None:
+            for e in enemies:
+                for strike in range(3):
+                    sx_off = random.uniform(-25, 25)
+                    src = (e.x + sx_off, e.y - 350 - strike * 40)
+                    pts = [(src[0], src[1]), (e.x, e.y)]
+                    bolts.append(LightningBolt(pts, 0.18 + strike * 0.07))
+            # プレイヤー周囲にも追加雷
+            for _ in range(6):
+                a = random.uniform(0, math.pi*2)
+                r2 = random.uniform(80, 280)
+                tx2 = player.x + math.cos(a) * r2
+                ty2 = player.y + math.sin(a) * r2
+                bolts.append(LightningBolt([(tx2, ty2 - 300), (tx2, ty2)], 0.2))
         for e in enemies:
             if _is_boss(e): e.hp -= 800
             else:           e.hp  = 0
-            e.hit_flash = 0.3
-            rings.append(RingEffect(e.x, e.y, (0,220,255), e.radius*3, 3, 0.3))
-            for _ in range(4): particles.append(Particle(e.x, e.y, (0,220,255)))
-        rings.append(RingEffect(player.x, player.y, (0,200,255), 750, 5, 0.55))
-        floats.append(FloatText(player.x, player.y-100, "⚡ THUNDERBOLT RAIN! ⚡", (0,220,255), 2.5))
+            _enemy_fx(e, col)
+        floats.append(BigFloatText(player.x, player.y-80, "⚡ THUNDERBOLT RAIN! ⚡", col))
+        if shake: shake.shake(28, 1.0)
 
     elif char_name == "Valley Wraith":
+        col = (160, 60, 255)
+        if flashes is not None: flashes.append(ScreenFlash((80, 0, 180), 0.65, 180))
+        _burst(player.x, player.y, col, 100)
+        _burst(player.x, player.y, (220, 180, 255), 50)
+        _rings(player.x, player.y, col, 6, 150, 10)
+        # ボイドシンギュラリティ（ブラックホール展開）
+        if sp_effects is not None:
+            sp_effects.append(VoidSingularity(player.x, player.y))
+            for e in enemies:
+                sp_effects.append(VoidSingularity(e.x, e.y))
         for e in enemies:
             if _is_boss(e):
                 e.hp -= 600
@@ -3894,10 +4216,9 @@ def activate_sp_ultimate(char_name, player, enemies, floats, rings, particles, b
                 e.hp = 0
                 e.x = player.x + (e.x-player.x)*0.1
                 e.y = player.y + (e.y-player.y)*0.1
-            e.hit_flash = 0.3
-            rings.append(RingEffect(e.x, e.y, (100,0,200), e.radius*2, 3, 0.3))
-        rings.append(RingEffect(player.x, player.y, (120,0,255), 1000, 7, 0.9))
-        floats.append(FloatText(player.x, player.y-100, "🌀 VOID COLLAPSE! 🌀", (160,60,255), 2.5))
+            _enemy_fx(e, col, ring_w=6)
+        floats.append(BigFloatText(player.x, player.y-80, "🌀 VOID COLLAPSE! 🌀", col))
+        if shake: shake.shake(35, 1.3)
 
     return spr_bolts
 
@@ -3909,7 +4230,7 @@ def run_game(snd,sprites,char_data):
     player=Player(char_data,sprites)
     bullets=[]; enemies=[]; gems=[]; floats=[]; particles=[]
     flames=[]; bolts=[]; chests=[]; rings=[]
-    capsules=[]; sp_orbs=[]; minions=[]
+    capsules=[]; sp_orbs=[]; minions=[]; flashes=[]; sp_effects=[]
     since_capsule = 0.0
     level=1; xp=0; xp_next=20
     elapsed=0.0; since_spawn=0.0; since_chest=40.0
@@ -3952,8 +4273,8 @@ def run_game(snd,sprites,char_data):
                     if player.sp >= player.sp_max:
                         player.sp = 0.0; player.sp_ready = False
                         ox2=player.x; oy2=player.y
-                        activate_sp_ultimate(player.char_name, player, enemies, floats, rings, particles, bullets, screen, ox2, oy2)
-                        snd.play("levelup"); shake.shake(12, 0.6)
+                        activate_sp_ultimate(player.char_name, player, enemies, floats, rings, particles, bullets, screen, ox2, oy2, shake=shake, flashes=flashes, sp_effects=sp_effects, bolts=bolts)
+                        snd.play("levelup")
                 if state=="play" and event.key==pygame.K_ESCAPE:
                     state="pause"; pygame.mixer.pause()
                 elif state=="pause":
@@ -4104,6 +4425,10 @@ def run_game(snd,sprites,char_data):
             bolts=[b for b in bolts if b.alive]
             for r in rings: r.update(dt)
             rings=[r for r in rings if r.alive]
+            for fl in flashes: fl.update(dt)
+            flashes=[fl for fl in flashes if fl.alive]
+            for se in sp_effects: se.update(dt)
+            sp_effects=[se for se in sp_effects if se.alive]
             for cap in capsules:
                 cap.update(dt)
                 if dist((player.x,player.y),(cap.x,cap.y))<player.radius+cap.radius:
@@ -4277,6 +4602,7 @@ def run_game(snd,sprites,char_data):
             elif etype=='minion': ent.draw(screen,ox,oy)
             else:               ent.draw(screen,ox,oy)
         for bl in bolts:    bl.draw(screen,ox,oy)
+        for se in sp_effects: se.draw(screen,ox,oy)
         for ft in floats:   ft.draw(screen,ox,oy)
         draw_hud(screen,player,level,xp,xp_next,elapsed,kills,boss_warn,VICTORY_TIME)
         # Godzilla warning flash
@@ -4333,6 +4659,9 @@ def run_game(snd,sprites,char_data):
         if state=="pause":    pause_rects=pause_screen(screen)
         if state=="tree":     draw_evolution_tree(screen,player)
 
+        # ── SP発動フラッシュ ─────────────────────────────────
+        for fl in flashes: fl.draw(screen)
+
         # ── 画面端血しぶきビネット ──────────────────────────────
         if player.hurt_flash>0:
             t=min(player.hurt_flash/0.22,1.0)
@@ -4348,6 +4677,328 @@ def run_game(snd,sprites,char_data):
 
 
 # ─────────────────────────────────────────────
+# Opening screen
+# ─────────────────────────────────────────────
+
+def opening_screen(surf):
+    """タイトル・オープニング画面。ENTERまたはクリックで次へ。"""
+    clock2 = pygame.time.Clock()
+    t0 = pygame.time.get_ticks()
+
+    # 流れる星パーティクル
+    class Star:
+        def __init__(self):
+            self.reset(born=True)
+        def reset(self, born=False):
+            self.x = random.uniform(0, W)
+            self.y = random.uniform(0, H) if born else -4.0
+            self.vy = random.uniform(30, 110)
+            self.r  = random.uniform(1.0, 2.5)
+            self.alpha = random.randint(80, 200)
+        def update(self, dt):
+            self.y += self.vy * dt
+            if self.y > H + 8: self.reset()
+        def draw(self, s):
+            a = int(self.alpha)
+            ss = pygame.Surface((int(self.r)*2+2, int(self.r)*2+2), pygame.SRCALPHA)
+            pygame.draw.circle(ss, (180, 220, 255, a), (int(self.r)+1, int(self.r)+1), int(self.r))
+            s.blit(ss, (int(self.x)-int(self.r)-1, int(self.y)-int(self.r)-1))
+
+    stars = [Star() for _ in range(120)]
+
+    STORY = [
+        "西暦2089年。新型ウイルスの大量変異により",
+        "人類は滅亡の危機に瀕していた。",
+        "",
+        "最後の希望は、特殊能力を持つ数人の戦士——",
+        "彼らを「POWER SURGE」と呼ぶ。",
+    ]
+
+    font_title = pygame.font.SysFont("meiryo", 72, bold=True)
+
+    phase = "fadein"   # fadein → main → fadeout
+    fade_alpha = 0
+    fade_surf = pygame.Surface((W, H))
+    fade_surf.fill((0, 0, 0))
+
+    story_timer = 0.0
+    story_visible = 0   # 何行表示したか
+
+    blink = 0.0
+    done = False
+
+    while not done:
+        dt = min(clock2.tick(60) / 1000.0, 0.05)
+        t_ms = pygame.time.get_ticks() - t0
+        story_timer += dt
+        blink += dt
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    pygame.quit(); sys.exit()
+                if phase == "main":
+                    phase = "fadeout"; fade_alpha = 0
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if phase == "main":
+                    phase = "fadeout"; fade_alpha = 0
+
+        # フェーズ処理
+        if phase == "fadein":
+            fade_alpha = max(0, fade_alpha - 320 * dt)
+            if fade_alpha <= 0:
+                phase = "main"
+        elif phase == "fadeout":
+            fade_alpha = min(255, fade_alpha + 340 * dt)
+            if fade_alpha >= 255:
+                done = True
+
+        # ── 背景 ──
+        surf.fill((4, 2, 12))
+        # グリッド（遠景）
+        step = 90
+        grid_alpha_s = pygame.Surface((W, H), pygame.SRCALPHA)
+        for gx in range(0, W + step, step):
+            pygame.draw.line(grid_alpha_s, (20, 12, 38, 80), (gx, 0), (gx, H))
+        for gy in range(0, H + step, step):
+            pygame.draw.line(grid_alpha_s, (20, 12, 38, 80), (0, gy), (W, gy))
+        surf.blit(grid_alpha_s, (0, 0))
+
+        # 星
+        for st in stars:
+            st.update(dt)
+            st.draw(surf)
+
+        # ── タイトルロゴ ──
+        pulse = abs(math.sin(t_ms * 0.0018)) * 0.25 + 0.75
+        title_col = (int(0 * pulse), int(220 * pulse), int(100 * pulse))
+        shadow_col = (0, 80, 30)
+
+        title_s = font_title.render("POWER  SURGE", True, title_col)
+        tw, th_t = title_s.get_width(), title_s.get_height()
+        tx = W // 2 - tw // 2
+        ty = 130
+
+        # グロー
+        glow = pygame.Surface((tw + 80, th_t + 40), pygame.SRCALPHA)
+        pygame.draw.rect(glow, (*title_col, 30), (0, 0, tw + 80, th_t + 40), border_radius=18)
+        surf.blit(glow, (tx - 40, ty - 20))
+
+        # シャドウ
+        shad = font_title.render("POWER  SURGE", True, shadow_col)
+        surf.blit(shad, (tx + 4, ty + 5))
+        surf.blit(title_s, (tx, ty))
+
+        # サブタイトル
+        sub = font_med.render("─ ウイルス殲滅RPG ─", True, (120, 110, 160))
+        surf.blit(sub, (W // 2 - sub.get_width() // 2, ty + th_t + 14))
+
+        # ── ストーリーテキスト ──
+        story_visible = min(len(STORY), int(story_timer / 0.6))
+        for li, line in enumerate(STORY[:story_visible]):
+            alpha = min(255, int((story_timer - li * 0.6) * 500))
+            if not line:
+                continue
+            col_s = (200, 190, 220)
+            ls = font_small.render(line, True, col_s)
+            ls.set_alpha(alpha)
+            ly = ty + th_t + 80 + li * 30
+            surf.blit(ls, (W // 2 - ls.get_width() // 2, ly))
+
+        # ── "ENTER で開始" 点滅 ──
+        if story_visible >= len(STORY) and phase == "main":
+            if int(blink * 2) % 2 == 0:
+                enter_s = font_med.render("[ ENTER ] または クリック  で開始", True, NEON_G)
+                surf.blit(enter_s, (W // 2 - enter_s.get_width() // 2, H - 120))
+            esc_s = font_tiny.render("[ ESC ] 終了", True, (70, 65, 90))
+            surf.blit(esc_s, (W // 2 - esc_s.get_width() // 2, H - 80))
+
+        # フェードオーバーレイ
+        if fade_alpha > 0:
+            fade_surf.set_alpha(int(fade_alpha))
+            surf.blit(fade_surf, (0, 0))
+
+        pygame.display.flip()
+
+
+# ─────────────────────────────────────────────
+# Tutorial screen
+# ─────────────────────────────────────────────
+
+TUTORIAL_PAGES = [
+    {
+        "title": "基本操作",
+        "color": NEON_G,
+        "sections": [
+            ("移動",       "W A S D  または  矢印キー"),
+            ("ポーズ",     "ESC キー"),
+            ("ミュート",   "M キー"),
+            ("必殺技",     "SPACE キー  （SP満タン時）"),
+        ],
+        "note": "武器は自動で発射される。動き続けて敵を避けよう！",
+    },
+    {
+        "title": "レベルアップとスキル",
+        "color": NEON_B,
+        "sections": [
+            ("ジェム",     "敵を倒すと緑のジェムを落とす"),
+            ("XP",         "ジェムを拾うとXPを獲得"),
+            ("レベルアップ","XPが満タンになると3択スキルが出現"),
+            ("スキル選択", "[ 1 ] [ 2 ] [ 3 ] キーまたはクリック"),
+        ],
+        "note": "スキルを組み合わせて強い武器に進化させよう！",
+    },
+    {
+        "title": "SPゲージと必殺技",
+        "color": (255, 200, 0),
+        "sections": [
+            ("SPオーブ",   "敵を倒すとオレンジのオーブが出る"),
+            ("ゲージ充填", "オーブを拾うとSPゲージが増える"),
+            ("必殺技発動", "ゲージ満タン → SPACE で全体攻撃！"),
+            ("キャラ固有", "各キャラで異なる派手なSP技が発動する"),
+        ],
+        "note": "SP技はほぼ全ての雑魚を一撃で倒す強力な技だ！",
+    },
+    {
+        "title": "地形とボス",
+        "color": NEON_P,
+        "sections": [
+            ("地形効果",   "草原・砂漠・雪原・マグマなど多様な地形"),
+            ("地形の影響", "移動速度・ダメージ・特殊効果が変化する"),
+            ("ボス出現",   "2分ごとに強力なボスが出現する"),
+            ("ゴジラ",     "5分経過後、最強のゴジラが現れる！"),
+        ],
+        "note": "5分間生き残ると勝利！地形を活かして戦え！",
+    },
+]
+
+def tutorial_screen(surf):
+    """チュートリアル画面。← → で前後ページ、ENTER/SPACE/ESC でスキップ。"""
+    clock2 = pygame.time.Clock()
+    page = 0
+    total = len(TUTORIAL_PAGES)
+    done = False
+    fade_alpha = 255
+    fade_in = True
+    fade_surf = pygame.Surface((W, H)); fade_surf.fill((0, 0, 0))
+    blink = 0.0
+
+    while not done:
+        dt = min(clock2.tick(60) / 1000.0, 0.05)
+        blink += dt
+
+        if fade_in:
+            fade_alpha = max(0, fade_alpha - 400 * dt)
+            if fade_alpha <= 0: fade_in = False
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_RIGHT, pygame.K_d):
+                    if page < total - 1:
+                        page += 1; fade_in = True; fade_alpha = 180
+                    else:
+                        done = True
+                elif event.key in (pygame.K_LEFT, pygame.K_a):
+                    if page > 0:
+                        page -= 1; fade_in = True; fade_alpha = 180
+                elif event.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE):
+                    done = True
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                mx2, my2 = pygame.mouse.get_pos()
+                if mx2 > W // 2:
+                    if page < total - 1:
+                        page += 1; fade_in = True; fade_alpha = 180
+                    else:
+                        done = True
+                else:
+                    if page > 0:
+                        page -= 1; fade_in = True; fade_alpha = 180
+
+        pg = TUTORIAL_PAGES[page]
+        col = pg["color"]
+
+        # ── 背景 ──
+        surf.fill(UI_BG)
+        step = 80
+        for gx in range(0, W + step, step):
+            pygame.draw.line(surf, UI_GRID, (gx, 0), (gx, H))
+        for gy in range(0, H + step, step):
+            pygame.draw.line(surf, UI_GRID, (0, gy), (W, gy))
+
+        # ── ヘッダー ──
+        hdr = font_large.render(f"チュートリアル  {page+1} / {total}", True, col)
+        _ang_panel(surf, W//2 - hdr.get_width()//2 - 30, 24,
+                   hdr.get_width() + 60, hdr.get_height() + 20, (8, 6, 16), col, cut=12, bw=2)
+        _brackets(surf, W//2 - hdr.get_width()//2 - 30, 24,
+                  hdr.get_width() + 60, hdr.get_height() + 20, col, size=14)
+        surf.blit(hdr, (W//2 - hdr.get_width()//2, 34))
+
+        # ── ページタイトル ──
+        pt = font_med.render(f"── {pg['title']} ──", True, (220, 215, 240))
+        surf.blit(pt, (W//2 - pt.get_width()//2, 115))
+
+        # ── セクション一覧 ──
+        card_w, card_h = 820, 68
+        cx0 = W // 2 - card_w // 2
+        for i, (label, desc) in enumerate(pg["sections"]):
+            ry = 168 + i * (card_h + 14)
+            _ang_panel(surf, cx0, ry, card_w, card_h, (14, 10, 24), col, cut=10, bw=2)
+            _brackets(surf, cx0, ry, card_w, card_h, col, size=8, bw=1)
+
+            lbl_s = font_med.render(label, True, col)
+            surf.blit(lbl_s, (cx0 + 24, ry + card_h // 2 - lbl_s.get_height() // 2))
+
+            _divider(surf, cx0 + 24 + lbl_s.get_width() + 16, ry + card_h // 2, 4, col)
+
+            desc_s = font_small.render(desc, True, (200, 195, 225))
+            surf.blit(desc_s, (cx0 + 24 + lbl_s.get_width() + 36,
+                                ry + card_h // 2 - desc_s.get_height() // 2))
+
+        # ── ノート ──
+        note_y = 168 + len(pg["sections"]) * (card_h + 14) + 10
+        note_bg = pygame.Surface((card_w, 46), pygame.SRCALPHA)
+        note_bg.fill((*col, 22))
+        surf.blit(note_bg, (cx0, note_y))
+        pygame.draw.rect(surf, col, (cx0, note_y, card_w, 46), 1)
+        note_icon = font_small.render("►", True, col)
+        surf.blit(note_icon, (cx0 + 12, note_y + 14))
+        note_s = font_small.render(pg["note"], True, (220, 215, 240))
+        surf.blit(note_s, (cx0 + 36, note_y + 14))
+
+        # ── ナビゲーション ──
+        nav_y = H - 80
+        if page > 0:
+            left_s = font_small.render("◄  前へ  ( ← )", True, (130, 120, 160))
+            surf.blit(left_s, (cx0, nav_y))
+        if page < total - 1:
+            right_s = font_small.render("次へ  ( → )  ►", True, col)
+            surf.blit(right_s, (cx0 + card_w - right_s.get_width(), nav_y))
+        else:
+            if int(blink * 2) % 2 == 0:
+                end_s = font_med.render("[ ENTER ] でゲーム開始 !", True, NEON_G)
+                surf.blit(end_s, (W//2 - end_s.get_width()//2, nav_y - 6))
+
+        # ページドット
+        for i in range(total):
+            dc = col if i == page else (50, 45, 70)
+            pygame.draw.circle(surf, dc, (W//2 - (total-1)*16 + i*32, nav_y + 38), 6 if i == page else 4)
+
+        skip_s = font_tiny.render("[ ESC / SPACE ]  スキップ", True, (55, 50, 75))
+        surf.blit(skip_s, (W // 2 - skip_s.get_width() // 2, H - 28))
+
+        # フェードオーバーレイ
+        if fade_alpha > 0:
+            fade_surf.set_alpha(int(fade_alpha))
+            surf.blit(fade_surf, (0, 0))
+
+        pygame.display.flip()
+
+
+# ─────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────
 if __name__=="__main__":
@@ -4355,6 +5006,8 @@ if __name__=="__main__":
     screen.blit(font_med.render("アセット生成中...",True,GRAY),(W//2-90,H//2-20))
     pygame.display.flip()
     snd=SoundManager(); sprites=build_sprites()
+    opening_screen(screen)
+    tutorial_screen(screen)
     while True:
         char_data=character_select(screen,sprites)
         result=run_game(snd,sprites,char_data)
