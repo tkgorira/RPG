@@ -7,6 +7,7 @@ import array as arr
 
 pygame.init()
 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+pygame.key.stop_text_input()  # IMEによるキー横取りを無効化
 
 W, H = 1280, 720
 screen = pygame.display.set_mode((W, H))
@@ -1876,15 +1877,14 @@ class GodzillaBeam:
     """ゴジラの放射熱線。プレイヤーにも敵にも当たる。"""
     DAMAGE_PLAYER = 60   # per second
     DAMAGE_ENEMY  = 800  # per second
-    WIDTH         = 48   # ビーム幅 (world units)
-    SPEED         = 0.9  # rad/sec の旋回速度
+    WIDTH         = 24   # ビーム幅 (world units)
     RANGE         = 1600 # ビームの射程
 
     def __init__(self, gx, gy, target_angle):
         self.gx = gx; self.gy = gy
-        self.angle = target_angle     # current beam angle (radians)
+        self.angle = target_angle     # 固定角度（追尾しない）
         self.alive = True
-        self.duration = 3.5           # ビーム持続時間
+        self.duration = 2.0           # ビーム持続時間
         self.timer = self.duration
         self.tick_cd = 0.0            # damage tick
 
@@ -1893,10 +1893,7 @@ class GodzillaBeam:
         if self.timer <= 0:
             self.alive = False
             return
-        # ゆっくりプレイヤー方向に旋回
-        target = math.atan2(py - self.gy, px - self.gx)
-        diff = (target - self.angle + math.pi) % (2*math.pi) - math.pi
-        self.angle += max(-self.SPEED*dt, min(self.SPEED*dt, diff))
+        # 角度固定（追尾しない）
         # ビーム軸ベクトル
         bx = math.cos(self.angle); by = math.sin(self.angle)
         self.tick_cd -= dt
@@ -1907,7 +1904,7 @@ class GodzillaBeam:
             along = dx2*bx + dy2*by
             if along < 0 or along > self.RANGE: return False
             perp = abs(dx2*by - dy2*bx)
-            return perp < self.WIDTH * 0.5 + 12
+            return perp < self.WIDTH * 0.5 + 4
 
         if self.tick_cd <= 0:
             self.tick_cd = 0.1  # 0.1秒ごとにダメージ
@@ -1925,45 +1922,81 @@ class GodzillaBeam:
 
     def draw(self, surf, ox, oy):
         t_ms = pygame.time.get_ticks()
-        fade = min(1.0, self.timer / 0.4)   # フェードアウト
-        # ビームの起点（ゴジラの口）
+        fade = min(1.0, self.timer / 0.4)
+        pulse = 0.5 + 0.5 * math.sin(t_ms * 0.018)
         bx = math.cos(self.angle); by2 = math.sin(self.angle)
-        # 起点から射程まで複数の多角形で描画
-        STEPS = 20
-        step_r = self.RANGE / STEPS
-        w_start = self.WIDTH * 1.6
-        w_end   = self.WIDTH * 0.3
+        nx2 = -by2; ny2 = bx
 
-        for i in range(STEPS):
-            t0 = i / STEPS; t1 = (i+1) / STEPS
-            r0 = step_r * i;  r1 = step_r * (i+1)
-            w0 = w_start*(1-t0)+w_end*t0
-            w1 = w_start*(1-t1)+w_end*t1
-            # 法線方向
-            nx2 = -by2; ny2 = bx
-            # 4頂点 (world) → screen
-            pts_w = [
-                (self.gx+bx*r0+nx2*w0*0.5, self.gy+by2*r0+ny2*w0*0.5),
-                (self.gx+bx*r1+nx2*w1*0.5, self.gy+by2*r1+ny2*w1*0.5),
-                (self.gx+bx*r1-nx2*w1*0.5, self.gy+by2*r1-ny2*w1*0.5),
-                (self.gx+bx*r0-nx2*w0*0.5, self.gy+by2*r0-ny2*w0*0.5),
-            ]
-            pts_s = [iso_pos(wx, wy, 30, ox, oy) for wx, wy in pts_w]
-            # 外層：薄い青緑
-            pulse = abs(math.sin(t_ms*0.008 + i*0.3))
-            a_outer = int(60 * fade * (1-t0*0.6))
-            seg = pygame.Surface((W, H), pygame.SRCALPHA)
-            pygame.draw.polygon(seg, (0, 240, 140, a_outer), pts_s)
-            surf.blit(seg, (0,0))
-        # 中心核心：明るい白緑ライン
-        tip_s  = iso_pos(self.gx + bx*20,  self.gy + by2*20,  35, ox, oy)
-        end_s  = iso_pos(self.gx + bx*self.RANGE*0.9, self.gy + by2*self.RANGE*0.9, 30, ox, oy)
-        core_a = int(220 * fade)
-        core_s = pygame.Surface((W, H), pygame.SRCALPHA)
-        w_core = max(3, int(8 * fade * (1+0.3*math.sin(t_ms*0.015))))
-        pygame.draw.line(core_s, (160, 255, 200, core_a), tip_s, end_s, w_core)
-        pygame.draw.line(core_s, (255, 255, 255, int(core_a*0.8)), tip_s, end_s, max(1, w_core//2))
-        surf.blit(core_s, (0,0))
+        STEPS = 24
+        step_r = self.RANGE / STEPS
+        w_start = self.WIDTH * 2.2
+        w_end   = self.WIDTH * 0.4
+
+        # ── Layer definitions: (width_mult, color, base_alpha)
+        # 外→内の順に描画して立体感を出す
+        layers = [
+            (3.5, (0, 180, 80),   38),   # 最外郭：広い暗緑グロー
+            (2.2, (0, 230, 120),  55),   # 中間グロー
+            (1.3, (60, 255, 160), 90),   # 内側明グロー
+            (0.7, (180, 255, 210),140),  # コア手前
+        ]
+
+        beam_surf = pygame.Surface((W, H), pygame.SRCALPHA)
+        for w_mult, col, base_a in layers:
+            for i in range(STEPS):
+                t0 = i / STEPS; t1 = (i+1) / STEPS
+                r0 = step_r * i;  r1 = step_r * (i+1)
+                w0 = w_start * w_mult * (1-t0) + w_end * w_mult * t0
+                w1 = w_start * w_mult * (1-t1) + w_end * w_mult * t1
+                seg_fade = fade * (1 - t0 * 0.55) * (0.85 + 0.15 * pulse)
+                alpha = int(base_a * seg_fade)
+                if alpha < 4: continue
+                pts_w = [
+                    (self.gx+bx*r0+nx2*w0*0.5, self.gy+by2*r0+ny2*w0*0.5),
+                    (self.gx+bx*r1+nx2*w1*0.5, self.gy+by2*r1+ny2*w1*0.5),
+                    (self.gx+bx*r1-nx2*w1*0.5, self.gy+by2*r1-ny2*w1*0.5),
+                    (self.gx+bx*r0-nx2*w0*0.5, self.gy+by2*r0-ny2*w0*0.5),
+                ]
+                pts_s = [iso_pos(wx, wy, 30, ox, oy) for wx, wy in pts_w]
+                pygame.draw.polygon(beam_surf, (*col, alpha), pts_s)
+        surf.blit(beam_surf, (0, 0))
+
+        # ── エッジハイライト（ビームの上辺・下辺を明るく = 立体感）
+        edge_surf = pygame.Surface((W, H), pygame.SRCALPHA)
+        for sign in (1, -1):
+            prev_s = None
+            for i in range(STEPS + 1):
+                t0 = i / STEPS
+                r0 = step_r * i
+                w0 = (w_start * 0.6 * (1-t0) + w_end * 0.6 * t0)
+                wx = self.gx + bx*r0 + nx2*w0*0.5*sign
+                wy = self.gy + by2*r0 + ny2*w0*0.5*sign
+                cur_s = iso_pos(wx, wy, 32, ox, oy)
+                if prev_s and i > 0:
+                    a_edge = int(200 * fade * (1 - t0 * 0.7))
+                    pygame.draw.line(edge_surf, (220, 255, 230, a_edge), prev_s, cur_s, 2)
+                prev_s = cur_s
+        surf.blit(edge_surf, (0, 0))
+
+        # ── 中心核心：白熱ライン
+        core_surf = pygame.Surface((W, H), pygame.SRCALPHA)
+        tip_s = iso_pos(self.gx + bx*18,  self.gy + by2*18,  36, ox, oy)
+        end_s = iso_pos(self.gx + bx*self.RANGE*0.92, self.gy + by2*self.RANGE*0.92, 30, ox, oy)
+        w_core = max(3, int(6 * fade * (1 + 0.25 * pulse)))
+        pygame.draw.line(core_surf, (200, 255, 220, int(230*fade)), tip_s, end_s, w_core)
+        pygame.draw.line(core_surf, (255, 255, 255, int(200*fade)), tip_s, end_s, max(1, w_core//2))
+        surf.blit(core_surf, (0, 0))
+
+        # ── 起点フレア（ゴジラの口元）
+        flare_r = int((18 + 10*pulse) * fade)
+        if flare_r > 2:
+            flare_s = pygame.Surface((flare_r*4, flare_r*4), pygame.SRCALPHA)
+            fc = (flare_r*2, flare_r*2)
+            pygame.draw.circle(flare_s, (0, 255, 140, int(120*fade)), fc, flare_r*2)
+            pygame.draw.circle(flare_s, (200, 255, 220, int(180*fade)), fc, flare_r)
+            pygame.draw.circle(flare_s, (255, 255, 255, int(220*fade)), fc, max(2, flare_r//2))
+            fx, fy = iso_pos(self.gx + bx*10, self.gy + by2*10, 34, ox, oy)
+            surf.blit(flare_s, (fx - flare_r*2, fy - flare_r*2))
 
 
 class GodzillaEnemy(Boss):
@@ -1977,10 +2010,12 @@ class GodzillaEnemy(Boss):
         self.level = 0; self.base_speed = spd
         self.name = "GODZILLA"
         # ビーム関連
-        self.beam_cd = 6.0     # 最初のビームまでの待機
+        self.beam_cd = 4.0     # 最初のビームまでの待機
         self.beam_charging = False
         self.beam_charge_t = 0.0
         self.beam_angle = 0.0
+        self.beam_lock_px = 0.0   # ロックオン時のプレイヤー位置
+        self.beam_lock_py = 0.0
         self.active_beam = None   # GodzillaBeamインスタンス
         # telegraph フィールド（Boss互換）
         self.telegraph = 0.0
@@ -1997,15 +2032,18 @@ class GodzillaEnemy(Boss):
         self.beam_cd -= dt
         if self.beam_cd <= 0 and not self.beam_charging and self.active_beam is None:
             self.beam_charging = True
-            self.beam_charge_t = 2.5  # チャージ溜め時間
+            self.beam_charge_t = 1.2  # ロックオン警告時間
+            # ロックオン時にプレイヤー位置と角度を確定
             self.beam_angle = math.atan2(py-self.y, px-self.x)
+            self.beam_lock_px = px
+            self.beam_lock_py = py
         if self.beam_charging:
             self.beam_charge_t -= dt
             if self.beam_charge_t <= 0:
                 self.beam_charging = False
-                self.active_beam = GodzillaBeam(self.x, self.y,
-                                                math.atan2(py-self.y, px-self.x))
-                self.beam_cd = random.uniform(9.0, 13.0)
+                # 発射方向はロックオン時に確定した角度で固定
+                self.active_beam = GodzillaBeam(self.x, self.y, self.beam_angle)
+                self.beam_cd = random.uniform(6.0, 10.0)
 
     def update_beam(self, dt, px, py, enemies, player, floats, rings, particles):
         """ビームの更新（run_gameから別途呼ぶ）"""
@@ -4085,7 +4123,7 @@ def activate_sp_ultimate(char_name, player, enemies, floats, rings, particles, b
         rings.append(RingEffect(e.x, e.y, (255,255,255), e.radius*2, 3, 0.25))
         for _ in range(pcount): particles.append(Particle(e.x, e.y, color))
 
-    if char_name == "Knight":
+    if char_name == "ナイト":
         col = (255, 210, 60)
         if flashes is not None: flashes.append(ScreenFlash((200, 150, 20), 0.55, 170))
         _burst(player.x, player.y, col, 100)
@@ -4110,7 +4148,7 @@ def activate_sp_ultimate(char_name, player, enemies, floats, rings, particles, b
         floats.append(BigFloatText(player.x, player.y-80, "⚔ WAR CRY! ⚔", col))
         if shake: shake.shake(30, 1.1)
 
-    elif char_name == "Mage":
+    elif char_name == "魔法使い":
         col = (255, 90, 10)
         if flashes is not None: flashes.append(ScreenFlash((200, 60, 0), 0.55, 170))
         _burst(player.x, player.y, col, 80)
@@ -4129,7 +4167,7 @@ def activate_sp_ultimate(char_name, player, enemies, floats, rings, particles, b
         floats.append(BigFloatText(player.x, player.y-80, "☄ METEOR RAIN! ☄", (255, 120, 0)))
         if shake: shake.shake(28, 1.0)
 
-    elif char_name == "Rogue":
+    elif char_name == "ローグ":
         col = (80, 230, 40)
         if flashes is not None: flashes.append(ScreenFlash((20, 150, 0), 0.55, 160))
         _burst(player.x, player.y, col, 80)
@@ -4150,7 +4188,7 @@ def activate_sp_ultimate(char_name, player, enemies, floats, rings, particles, b
         floats.append(BigFloatText(player.x, player.y-80, "☠ POISON MIST! ☠", col))
         if shake: shake.shake(26, 1.0)
 
-    elif char_name == "Plague Dr":
+    elif char_name == "疫病医師":
         col = (170, 0, 255)
         if flashes is not None: flashes.append(ScreenFlash((100, 0, 180), 0.6, 175))
         _burst(player.x, player.y, col, 90)
@@ -4170,7 +4208,7 @@ def activate_sp_ultimate(char_name, player, enemies, floats, rings, particles, b
         floats.append(BigFloatText(player.x, player.y-80, "✝ BLACK DEATH! ✝", col))
         if shake: shake.shake(32, 1.2)
 
-    elif char_name == "Lightning Mage":
+    elif char_name == "雷魔道士":
         col = (0, 230, 255)
         if flashes is not None: flashes.append(ScreenFlash((0, 160, 200), 0.5, 165))
         _burst(player.x, player.y, col, 90)
@@ -4198,7 +4236,7 @@ def activate_sp_ultimate(char_name, player, enemies, floats, rings, particles, b
         floats.append(BigFloatText(player.x, player.y-80, "⚡ THUNDERBOLT RAIN! ⚡", col))
         if shake: shake.shake(28, 1.0)
 
-    elif char_name == "Valley Wraith":
+    elif char_name == "谷の亡霊":
         col = (160, 60, 255)
         if flashes is not None: flashes.append(ScreenFlash((80, 0, 180), 0.65, 180))
         _burst(player.x, player.y, col, 100)
@@ -4219,6 +4257,18 @@ def activate_sp_ultimate(char_name, player, enemies, floats, rings, particles, b
             _enemy_fx(e, col, ring_w=6)
         floats.append(BigFloatText(player.x, player.y-80, "🌀 VOID COLLAPSE! 🌀", col))
         if shake: shake.shake(35, 1.3)
+
+    else:
+        col = (200, 200, 255)
+        if flashes is not None: flashes.append(ScreenFlash((100, 80, 180), 0.55, 160))
+        _burst(player.x, player.y, col, 80)
+        _rings(player.x, player.y, col, 4, 150, 8)
+        for e in enemies:
+            if _is_boss(e): e.hp -= 700
+            else:           e.hp  = 0
+            _enemy_fx(e, col)
+        floats.append(BigFloatText(player.x, player.y-80, "💀 DARK SURGE! 💀", col))
+        if shake: shake.shake(25, 1.0)
 
     return spr_bolts
 
@@ -4474,8 +4524,8 @@ def run_game(snd,sprites,char_data):
                     snd.play("kill")
                     for _ in range(8): particles.append(Particle(e.x,e.y,e.color))
                     rings.append(RingEffect(e.x,e.y,e.color,e.radius*2+10,3,0.3))
-                    # SP orb drop: 25% normal, 100% boss
-                    if isinstance(e,(Boss,GodzillaEnemy)) or random.random()<0.08:
+                    # SP orb drop: 12% normal, 100% boss
+                    if isinstance(e,(Boss,GodzillaEnemy)) or random.random()<0.12:
                         sp_orbs.append(SPOrb(e.x+random.uniform(-20,20), e.y+random.uniform(-20,20)))
                     if isinstance(e,Boss):
                         boss_kills+=1
@@ -4496,7 +4546,7 @@ def run_game(snd,sprites,char_data):
                 if dist((player.x,player.y),(sp.x,sp.y))<player.PICKUP_RANGE:
                     sp.alive=False
                     was_ready=player.sp>=player.sp_max
-                    player.sp=min(player.sp_max, player.sp+8.0)
+                    player.sp=min(player.sp_max, player.sp+6.0)
                     if player.sp>=player.sp_max and not was_ready:
                         player.sp_ready=True
                         floats.append(FloatText(player.x,player.y-80,"SP満タン！[SPACE]",(255,200,0),2.0))
@@ -4584,6 +4634,26 @@ def run_game(snd,sprites,char_data):
         for e in enemies:
             if isinstance(e, GodzillaEnemy) and e.active_beam:
                 e.active_beam.draw(screen, ox, oy)
+            # ロックオンマーカー（チャージ中にプレイヤー位置に照準）
+            if isinstance(e, GodzillaEnemy) and e.beam_charging:
+                t_ms = pygame.time.get_ticks()
+                prog = 1.0 - e.beam_charge_t / 1.2  # 0→1
+                pulse = abs(math.sin(t_ms * 0.015))
+                lx, ly = iso_pos(e.beam_lock_px, e.beam_lock_py, 2, ox, oy)
+                r_outer = int(40 + 20 * (1 - prog))
+                r_inner = int(8 + 4 * pulse)
+                alpha = int(180 + 60 * pulse)
+                lock_s = pygame.Surface((r_outer*2+4, r_outer*2+4), pygame.SRCALPHA)
+                cx2, cy2 = r_outer+2, r_outer+2
+                pygame.draw.circle(lock_s, (255, 40, 40, alpha), (cx2, cy2), r_outer, 2)
+                pygame.draw.circle(lock_s, (255, 40, 40, alpha), (cx2, cy2), r_inner)
+                for ang in (0, math.pi/2, math.pi, 3*math.pi/2):
+                    ex2 = int(cx2 + math.cos(ang)*(r_outer-6))
+                    ey2 = int(cy2 + math.sin(ang)*(r_outer-6))
+                    pygame.draw.line(lock_s, (255,40,40,alpha), (ex2,ey2),
+                                     (int(cx2+math.cos(ang)*(r_outer+2)),
+                                      int(cy2+math.sin(ang)*(r_outer+2))), 2)
+                screen.blit(lock_s, (lx-r_outer-2, ly-r_outer-2))
         # Depth-sort all entities by (x+y) for correct isometric occlusion
         depth=[]
         for c in chests:    depth.append((c.x+c.y,'chest',c))
@@ -4860,17 +4930,6 @@ TUTORIAL_PAGES = [
             ("キャラ固有", "各キャラで異なる派手なSP技が発動する"),
         ],
         "note": "SP技はほぼ全ての雑魚を一撃で倒す強力な技だ！",
-    },
-    {
-        "title": "地形とボス",
-        "color": NEON_P,
-        "sections": [
-            ("地形効果",   "草原・砂漠・雪原・マグマなど多様な地形"),
-            ("地形の影響", "移動速度・ダメージ・特殊効果が変化する"),
-            ("ボス出現",   "2分ごとに強力なボスが出現する"),
-            ("ゴジラ",     "5分経過後、最強のゴジラが現れる！"),
-        ],
-        "note": "5分間生き残ると勝利！地形を活かして戦え！",
     },
 ]
 
