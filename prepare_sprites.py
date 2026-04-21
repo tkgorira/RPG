@@ -28,6 +28,7 @@ FILES = {
     "knight.png":        ("knight.png",        "oval",       8),
     "mage.png":          ("mage.png",           "floodfill",  40),
     "warior.png":        ("knight_old.png",     "floodfill",  50),
+    "sennshi.png":       ("warior.png",          "oval",        8),
     "masician.png":      ("mage_old.png",       "threshold",  40),
     "rogue.png":         ("rogue.png",          "threshold",  40),
     "pest.png":          ("plague_doctor.png",  "threshold",  40),

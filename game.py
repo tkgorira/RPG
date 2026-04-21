@@ -856,6 +856,7 @@ def build_sprites():
 
     raw = {
         "knight":         _pc("knight.png",        64, _draw_knight),
+        "warior":         _pc("warior.png",        64, _draw_knight),
         "mage":           _pc("mage.png",           64, _draw_mage),
         "rogue":          _pc("rogue.png",           64, _draw_rogue),
         "plague_doctor":  _pc("plague_doctor.png",  64, _draw_plague_doctor),
@@ -2191,7 +2192,7 @@ class GodzillaEnemy(Boss):
 # ─────────────────────────────────────────────
 CHARACTERS=[
     {"name":"ナイト",       "desc":["高HP・高防御","斧装備でスタート"],
-     "color":BLUE,  "hp":200,"speed":175,"sprite":"knight",
+     "color":BLUE,  "hp":200,"speed":175,"sprite":"warior",
      "weapons":{"wand":0,"axe":1,"cross":0,"garlic":0,"lightning":0,"flame":0,"plague":0},"wand_cd":0.8},
     {"name":"魔法使い",     "desc":["高速魔法攻撃","魔杖Lv2でスタート"],
      "color":PURPLE,"hp":90, "speed":230,"sprite":"mage",
