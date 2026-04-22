@@ -3,16 +3,8 @@
     "allow": [
       "Bash(git branch *)",
       "Bash(git push *)",
-      "Bash(python -c \"import game\")",
-      "Bash(python -c ' *)",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('game.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(git commit -m ' *)",
       "Bash(git pull *)",
-      "Bash(python -c \"import ast, sys; ast.parse\\(open\\('game.py'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('c:/webaply/RPG/game.py', encoding='utf-8'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
-      "Read(//c/Windows/Fonts/**)",
-      "Bash(python -m py_compile game.py)",
-      "Bash(python -c \"import cv2; print\\('cv2 OK', cv2.__version__\\)\")"
+      "Bash(git stash *)"
     ]
   }
 }

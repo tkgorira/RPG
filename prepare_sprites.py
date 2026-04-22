@@ -28,7 +28,7 @@ FILES = {
     "knight.png":        ("knight.png",        "oval",       8),
     "mage.png":          ("mage.png",           "floodfill",  40),
     "warior.png":        ("knight_old.png",     "floodfill",  50),
-    "sennshi.png":       ("warior.png",          "oval",        8),
+    "sennshi.png":       ("warior.png",          "threshold",  80),
     "masician.png":      ("mage_old.png",       "threshold",  40),
     "rogue.png":         ("rogue.png",          "threshold",  40),
     "pest.png":          ("plague_doctor.png",  "threshold",  40),
@@ -191,6 +191,39 @@ def crop_to_content(img: Image.Image, margin: int = 6) -> Image.Image:
     return img.crop((left, top, right, bot))
 
 
+# ─── 孤立ピクセルクラスタ除去 ────────────────────────────────
+def remove_small_components(img: Image.Image, min_size: int = 40) -> Image.Image:
+    """アルファ>0の連結成分のうち min_size px 未満のものを透明化する。"""
+    from collections import deque
+    img = img.convert("RGBA")
+    data = np.array(img)
+    alpha = data[:, :, 3]
+    h, w = alpha.shape
+    visited = np.zeros((h, w), dtype=bool)
+
+    def bfs(sy, sx):
+        pixels = []
+        q = deque([(sy, sx)])
+        visited[sy, sx] = True
+        while q:
+            y, x = q.popleft()
+            pixels.append((y, x))
+            for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1)):
+                if 0 <= ny < h and 0 <= nx < w and not visited[ny, nx] and alpha[ny, nx] > 10:
+                    visited[ny, nx] = True
+                    q.append((ny, nx))
+        return pixels
+
+    for y in range(h):
+        for x in range(w):
+            if alpha[y, x] > 10 and not visited[y, x]:
+                cluster = bfs(y, x)
+                if len(cluster) < min_size:
+                    for cy, cx in cluster:
+                        data[cy, cx, 3] = 0
+    return Image.fromarray(data)
+
+
 # ─── メイン処理 ──────────────────────────────────────────────
 def process(src_name: str, dst_name: str, mode: str, tolerance: float):
     src = os.path.join(INPUT_DIR, src_name)
@@ -212,6 +245,7 @@ def process(src_name: str, dst_name: str, mode: str, tolerance: float):
         img = remove_bg_threshold(img, tolerance=tolerance)
 
     if mode != "oval":
+        img = remove_small_components(img, min_size=40)
         img = crop_to_content(img, margin=6)
     img = img.resize((SPRITE_SIZE, SPRITE_SIZE), Image.LANCZOS)
     img.save(dst)
