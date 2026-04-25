@@ -52,6 +52,21 @@ TERRAIN_COLS = {
     TERRAIN_MOUNTAIN: [(72,  66, 56),  (92,  86, 72)],
 }
 
+# 3D box wall heights (pixels) and face colors per terrain type
+TERRAIN_WALL_H = {
+    TERRAIN_GRASS:    12,
+    TERRAIN_MAGMA:    16,
+    TERRAIN_ICE:      10,
+    TERRAIN_SWAMP:     8,
+}
+# (left_face_color, right_face_color)  ← left is more shadowed
+TERRAIN_WALL_COLS = {
+    TERRAIN_GRASS:  ((14, 42, 14),   (20, 58, 20)),
+    TERRAIN_MAGMA:  ((100, 22,  0),  (135, 32,  0)),
+    TERRAIN_ICE:    ((60, 110, 160), (80, 140, 195)),
+    TERRAIN_SWAMP:  ((30, 22, 10),   (42, 32, 16)),
+}
+
 TERRAIN_LABELS = {
     TERRAIN_GRASS:    "草原",
     TERRAIN_MAGMA:    "マグマ  HP減少 / 敵増加！",
@@ -2056,6 +2071,9 @@ class Enemy:
         spr=sprites.get(self.sprite_key)
         if spr:
             blit_dy=gsy-spr.get_height()-int(hover); blit_dx=gsx-spr.get_width()//2
+            # ISO 3D 奥行きクローン（左斜め後ろに暗いシルエットで厚みを演出）
+            _dp=spr.copy(); _dp.fill((22,18,12,200),special_flags=pygame.BLEND_RGBA_MULT)
+            surf.blit(_dp,(blit_dx-4,blit_dy+2))
             # 輪郭線（暗シルエットを4方向にずらしてから本体）
             ol=get_enemy_outline(self.sprite_key,spr)
             for odx,ody in ((-2,0),(2,0),(0,-2),(0,2)):
@@ -3039,6 +3057,9 @@ class Player:
                 spr=pygame.transform.rotate(spr,lean_angle)
             dy=gsy-spr.get_height()-int(hover)
             dx=gsx-spr.get_width()//2
+            # ISO 3D 奥行きクローン（左斜め後ろに暗いシルエットで厚みを演出）
+            _dp=spr.copy(); _dp.fill((22,18,12,200),special_flags=pygame.BLEND_RGBA_MULT)
+            surf.blit(_dp,(dx-4,dy+2))
             if self.hurt_flash>0:
                 flash_spr=spr.copy()
                 alpha=int(200*min(self.hurt_flash/0.18,1.0))
@@ -4287,6 +4308,26 @@ def draw_bg(surf, ox, oy, terrain_map=None, underground=False, player_wx=0.0, pl
                 pygame.draw.polygon(surf,(30,26,22),face_l,1)
                 pygame.draw.polygon(surf,(30,26,22),face_r,1)
         else:
+            # ── 3D box walls (left face + right face) ─────────────
+            if underground:
+                hw = 6
+                wlc, wrc = (10, 7, 16), (14, 10, 22)
+            else:
+                hw = TERRAIN_WALL_H.get(tt, 0)
+                wlc, wrc = TERRAIN_WALL_COLS.get(tt, ((40, 40, 40), (55, 55, 55)))
+            if hw > 0:
+                p1_b = (p1[0], p1[1] + hw)
+                p2_b = (p2[0], p2[1] + hw)
+                p3_b = (p3[0], p3[1] + hw)
+                pygame.draw.polygon(surf, wlc, [p3, p2, p2_b, p3_b])
+                pygame.draw.polygon(surf, wrc, [p1, p2, p2_b, p1_b])
+                # エッジライン（面の境界を引き締める）
+                edge_l = tuple(max(0, c - 12) for c in wlc)
+                edge_r = tuple(max(0, c - 12) for c in wrc)
+                pygame.draw.line(surf, edge_l, p3, p3_b, 1)
+                pygame.draw.line(surf, edge_r, p1, p1_b, 1)
+                pygame.draw.line(surf, edge_r, p2, p2_b, 1)
+            # ── 上面（壁の上に乗る） ──────────────────────────────
             tile_img = None if underground else _TERRAIN_TILES.get(tt)
             if tile_img:
                 # center the flat diamond tile on the diamond's screen center
