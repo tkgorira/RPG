@@ -5,15 +5,45 @@ import sys
 import os
 import array as arr
 import numpy as np
+import urllib.request
+import urllib.parse
+import json
+import threading
 
 pygame.init()
 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
 pygame.key.stop_text_input()  # IMEによるキー横取りを無効化
 
 W, H = 1280, 720
-screen = pygame.display.set_mode((W, H))
+screen = pygame.Surface((W, H))
+display = pygame.display.set_mode((W, H))
 pygame.display.set_caption("Vampire Survivors Like  [3D ISO]")
 clock = pygame.time.Clock()
+_fullscreen = False
+
+def flip_display():
+    dw, dh = display.get_size()
+    scale = min(dw / W, dh / H)
+    sw, sh = int(W * scale), int(H * scale)
+    scaled = pygame.transform.scale(screen, (sw, sh))
+    display.fill((0, 0, 0))
+    display.blit(scaled, ((dw - sw) // 2, (dh - sh) // 2))
+    pygame.display.flip()
+
+def screen_to_canvas(mx, my):
+    dw, dh = display.get_size()
+    scale = min(dw / W, dh / H)
+    ox = (dw - W * scale) / 2
+    oy = (dh - H * scale) / 2
+    return int((mx - ox) / scale), int((my - oy) / scale)
+
+def toggle_fullscreen():
+    global display, _fullscreen
+    _fullscreen = not _fullscreen
+    if _fullscreen:
+        display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+    else:
+        display = pygame.display.set_mode((W, H))
 
 WHITE  = (255, 255, 255)
 BLACK  = (0,   0,   0)
@@ -127,8 +157,8 @@ NEON_B   = (0,  180, 255)   # electric blue
 NEON_Y   = (255,185,   0)   # amber gold
 
 # ── Global volume state ──────────────────────
-_vol_bgm = 0.55   # 0.0 – 1.0
-_vol_sfx = 0.80
+_vol_bgm = 0.80   # 0.0 – 1.0
+_vol_sfx = 0.35
 
 # Kenney voxel tile images, loaded by build_sprites()
 _TERRAIN_TILES: dict = {}   # terrain_id → scaled pygame.Surface
@@ -1271,7 +1301,7 @@ class SoundManager:
         self.sfx["necro_summon"] = _load_se(os.path.join(_base,"se_necro.wav"),
                                             pygame.mixer.Sound(buffer=_chord_buf([200,280,160],0.4,0.3)))
         bgm = pygame.mixer.Sound(buffer=_bgm_buf())
-        bgm.set_volume(0.4); self.sfx["bgm"] = bgm
+        bgm.set_volume(_vol_bgm); self.sfx["bgm"] = bgm
         # 外部BGMファイル
         self._bgm_file = None
         for _ext in ("ogg","mp3","wav"):
@@ -1294,7 +1324,7 @@ class SoundManager:
         global _vol_bgm
         _vol_bgm = max(0.0, min(1.0, v))
         pygame.mixer.music.set_volume(_vol_bgm)
-        self.sfx["bgm"].set_volume(_vol_bgm * 0.4)
+        self.sfx["bgm"].set_volume(_vol_bgm)
 
     def play(self, name):
         if not self.muted and name in self.sfx:
@@ -3391,7 +3421,7 @@ def draw_hud(surf, player, level, xp, xp_next, elapsed, kills, boss_warn, victor
             lock = font_tiny.render("?", True, (50, 42, 18))
             surf.blit(lock, (ax + CHIP_SZ//2 - lock.get_width()//2, 34))
         # tooltip on hover
-        mx2, my2 = pygame.mouse.get_pos()
+        mx2, my2 = screen_to_canvas(*pygame.mouse.get_pos())
         if pygame.Rect(ax, 32, CHIP_SZ, CHIP_SZ).collidepoint(mx2, my2):
             tip_text = acc["name"] if owned else f"{acc['name']} (未取得)"
             tip = font_tiny.render(tip_text, True, ACC_COLOR if owned else (80, 65, 25))
@@ -3429,7 +3459,7 @@ def levelup_screen(surf, options):
     cw, ch = 330, 130
     total_w = len(options)*cw + (len(options)-1)*22
     sx0 = W//2 - total_w//2
-    mx, my = pygame.mouse.get_pos()
+    mx, my = screen_to_canvas(*pygame.mouse.get_pos())
     rects = []
     WCOLORS2 = {"wand":NEON_B,"axe":ORANGE,"cross":YELLOW,"garlic":NEON_R,
                 "lightning":CYAN,"flame":ORANGE,"scatter":(0,230,255),"speed":NEON_G,"maxhp":NEON_R}
@@ -3486,6 +3516,7 @@ def character_select(surf, sprites):
         for event in pygame.event.get():
             if event.type == pygame.QUIT: pygame.quit(); sys.exit()
             if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F11: toggle_fullscreen()
                 if event.key in (pygame.K_1, pygame.K_KP1): selected = 0
                 if event.key in (pygame.K_2, pygame.K_KP2): selected = 1
                 if event.key in (pygame.K_3, pygame.K_KP3): selected = 2
@@ -3494,7 +3525,7 @@ def character_select(surf, sprites):
                 if event.key in (pygame.K_6, pygame.K_KP6) and len(CHARACTERS)>5: selected = 5
                 if event.key == pygame.K_ESCAPE: pygame.quit(); sys.exit()
             if event.type == pygame.MOUSEBUTTONDOWN:
-                mx2, my2 = pygame.mouse.get_pos()
+                mx2, my2 = screen_to_canvas(*pygame.mouse.get_pos())
                 for i, rect in enumerate(char_rects):
                     if rect.collidepoint(mx2, my2): selected = i
 
@@ -3522,7 +3553,7 @@ def character_select(surf, sprites):
         sub_s = font_small.render("[ 1 ] - [ 6 ] またはクリックで選択", True, (80,75,110))
         surf.blit(sub_s, (W//2-sub_s.get_width()//2, 120))
 
-        mx, my = pygame.mouse.get_pos()
+        mx, my = screen_to_canvas(*pygame.mouse.get_pos())
         ch2=295; gap=18
         cw2=min(304,(W-40-(len(CHARACTERS)-1)*gap)//len(CHARACTERS))
         total_w=len(CHARACTERS)*cw2+(len(CHARACTERS)-1)*gap
@@ -3583,7 +3614,7 @@ def character_select(surf, sprites):
                 _ang_panel(gs2, 0, 0, cw2, ch2, (0,0,0,0), (*c, 70), cut=12, bw=5)
                 surf.blit(gs2, (rx, ry))
 
-        pygame.display.flip()
+        flip_display()
     return CHARACTERS[selected]
 
 
@@ -4083,7 +4114,7 @@ def pause_screen(surf):
     iw, ih, gap = 420, 54, 12
     total_h = len(ITEMS)*ih + (len(ITEMS)-1)*gap
     iy0 = 155
-    mx, my = pygame.mouse.get_pos()
+    mx, my = screen_to_canvas(*pygame.mouse.get_pos())
     rects = {}
     for i, item in enumerate(ITEMS):
         rx = W//2 - iw//2; ry = iy0 + i*(ih+gap)
@@ -4175,6 +4206,225 @@ def game_over_screen(surf, elapsed, kills, victory, score=0):
     hint = font_small.render("[ENTER] リスタート    [ESC] 終了", True, (80,75,110))
     surf.blit(hint, (W//2-hint.get_width()//2, H//2+ph//2-46))
 
+
+# ─────────────────────────────────────────────
+# Supabase オンラインランキング
+# ─────────────────────────────────────────────
+SUPABASE_URL = "https://ctbmnkqanesajposhnve.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN0Ym1ua3FhbmVzYWpwb3NobnZlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwOTY1NzIsImV4cCI6MjA5MjY3MjU3Mn0.c_NVwuqmDbGApzrzTwLzDug5aV14kjEh58fSaR0ottk"
+
+def submit_score(name, score):
+    def _post():
+        try:
+            url = f"{SUPABASE_URL}/rest/v1/scores"
+            payload = json.dumps({"name": name, "score": score}).encode("utf-8")
+            req = urllib.request.Request(url, data=payload, method="POST")
+            req.add_header("apikey", SUPABASE_KEY)
+            req.add_header("Authorization", f"Bearer {SUPABASE_KEY}")
+            req.add_header("Content-Type", "application/json")
+            req.add_header("Prefer", "return=minimal")
+            with urllib.request.urlopen(req, timeout=10):
+                pass
+        except Exception:
+            pass
+    threading.Thread(target=_post, daemon=True).start()
+
+def fetch_scores(count=10):
+    try:
+        url = (f"{SUPABASE_URL}/rest/v1/scores"
+               f"?select=name,score&order=score.desc&limit={count}")
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("apikey", SUPABASE_KEY)
+        req.add_header("Authorization", f"Bearer {SUPABASE_KEY}")
+        req.add_header("Accept", "application/json")
+        with urllib.request.urlopen(req, timeout=10) as res:
+            data = json.loads(res.read().decode("utf-8"))
+        return [(e["name"], e["score"]) for e in data]
+    except Exception:
+        return []
+
+# ─────────────────────────────────────────────
+# アーケード風名前入力画面
+# ─────────────────────────────────────────────
+_NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_."
+
+def name_entry_screen(surf, score):
+    """3文字のアーケード風名前入力。入力した名前を返す。"""
+    SLOTS  = 3
+    cursor = 0          # 現在選択中のスロット (0-2)
+    indices = [0, 0, 0] # 各スロットの文字インデックス
+    clock2 = pygame.time.Clock()
+    blink  = 0.0
+    done   = False
+
+    while not done:
+        dt = clock2.tick(60) / 1000.0
+        blink = (blink + dt * 2.2) % 2.0
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F11:
+                    toggle_fullscreen()
+                elif event.key in (pygame.K_UP, pygame.K_w):
+                    indices[cursor] = (indices[cursor] - 1) % len(_NAME_CHARS)
+                elif event.key in (pygame.K_DOWN, pygame.K_s):
+                    indices[cursor] = (indices[cursor] + 1) % len(_NAME_CHARS)
+                elif event.key in (pygame.K_LEFT, pygame.K_a):
+                    cursor = max(0, cursor - 1)
+                elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                    if cursor < SLOTS - 1:
+                        cursor += 1
+                    else:
+                        done = True
+                elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    if cursor < SLOTS - 1:
+                        cursor += 1
+                    else:
+                        done = True
+                elif event.key == pygame.K_BACKSPACE:
+                    cursor = max(0, cursor - 1)
+                elif event.key == pygame.K_ESCAPE:
+                    return "AAA"
+
+        # ── 描画 ──
+        surf.fill(DARK)
+        t_ms = pygame.time.get_ticks()
+
+        # 背景グリッド
+        for gx in range(-1, W//80+2):
+            pygame.draw.line(surf, UI_GRID, (gx*80, 0), (gx*80, H))
+        for gy in range(-1, H//80+2):
+            pygame.draw.line(surf, UI_GRID, (0, gy*80), (W, gy*80))
+
+        # スコア表示
+        sc_s = font_med.render(f"SCORE  {score:07d}", True, GOLD)
+        surf.blit(sc_s, (W//2 - sc_s.get_width()//2, H//2 - 190))
+
+        # タイトル
+        pulse = abs(math.sin(t_ms / 500))
+        title = font_large.render("ENTER YOUR NAME", True, NEON_Y)
+        title.set_alpha(int(180 + pulse * 75))
+        surf.blit(title, (W//2 - title.get_width()//2, H//2 - 140))
+
+        # 上下の文字プレビュー
+        SLOT_W, SLOT_H = 88, 100
+        gap = 24
+        total_w = SLOTS * SLOT_W + (SLOTS - 1) * gap
+        sx0 = W//2 - total_w//2
+
+        for i in range(SLOTS):
+            sx = sx0 + i * (SLOT_W + gap)
+            sy = H//2 - SLOT_H//2 + 10
+            is_cur = (i == cursor)
+
+            border_c = NEON_Y if is_cur else (60, 55, 90)
+            bg_c     = (22, 20, 38) if is_cur else (12, 10, 22)
+            _ang_panel(surf, sx, sy, SLOT_W, SLOT_H, bg_c, border_c, cut=8, bw=3 if is_cur else 1)
+
+            # 上の文字（薄く）
+            prev_idx = (indices[i] - 1) % len(_NAME_CHARS)
+            ps = font_med.render(_NAME_CHARS[prev_idx], True, (55, 50, 80))
+            surf.blit(ps, (sx + SLOT_W//2 - ps.get_width()//2, sy + 6))
+
+            # 選択中の文字
+            ch_col = NEON_Y if is_cur else (200, 195, 220)
+            if is_cur and blink > 1.0:
+                ch_col = (255, 255, 255)
+            cs = font_large.render(_NAME_CHARS[indices[i]], True, ch_col)
+            surf.blit(cs, (sx + SLOT_W//2 - cs.get_width()//2, sy + SLOT_H//2 - cs.get_height()//2))
+
+            # 下の文字（薄く）
+            next_idx = (indices[i] + 1) % len(_NAME_CHARS)
+            ns = font_med.render(_NAME_CHARS[next_idx], True, (55, 50, 80))
+            surf.blit(ns, (sx + SLOT_W//2 - ns.get_width()//2, sy + SLOT_H - ns.get_height() - 6))
+
+            # カーソル矢印
+            if is_cur:
+                ax = sx + SLOT_W//2
+                pygame.draw.polygon(surf, NEON_Y, [(ax, sy-14),(ax-10,sy-4),(ax+10,sy-4)])
+                pygame.draw.polygon(surf, NEON_Y, [(ax, sy+SLOT_H+14),(ax-10,sy+SLOT_H+4),(ax+10,sy+SLOT_H+4)])
+
+        hint = font_small.render("↑↓ 文字選択   →/ENTER 次へ   最後でENTER 決定", True, (80, 75, 110))
+        surf.blit(hint, (W//2 - hint.get_width()//2, H//2 + SLOT_H//2 + 50))
+
+        flip_display()
+
+    return "".join(_NAME_CHARS[i] for i in indices)
+
+# ─────────────────────────────────────────────
+# オンラインランキング表示画面
+# ─────────────────────────────────────────────
+def leaderboard_screen(surf, my_score, my_name):
+    """スコア送信後にランキングを表示する。"""
+    clock2 = pygame.time.Clock()
+    scores = []
+    loading = True
+
+    def _fetch():
+        nonlocal scores, loading
+        scores = fetch_scores(10)
+        loading = False
+    threading.Thread(target=_fetch, daemon=True).start()
+
+    wait = 0.0
+    while True:
+        dt = clock2.tick(60) / 1000.0
+        wait += dt
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F11:
+                    toggle_fullscreen()
+                elif not loading and event.key in (pygame.K_RETURN, pygame.K_ESCAPE, pygame.K_SPACE):
+                    return
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if not loading:
+                    return
+
+        surf.fill(DARK)
+        t_ms = pygame.time.get_ticks()
+
+        for gx in range(-1, W//80+2):
+            pygame.draw.line(surf, UI_GRID, (gx*80, 0), (gx*80, H))
+        for gy in range(-1, H//80+2):
+            pygame.draw.line(surf, UI_GRID, (0, gy*80), (W, gy*80))
+
+        pulse = abs(math.sin(t_ms / 500))
+        title = font_large.render("// RANKING //", True, GOLD)
+        title.set_alpha(int(180 + pulse * 75))
+        surf.blit(title, (W//2 - title.get_width()//2, 60))
+
+        pw, ph = 560, 420
+        px0, py0 = W//2 - pw//2, 120
+        _ang_panel(surf, px0, py0, pw, ph, UI_BG, GOLD, cut=16, bw=2)
+        _scan_overlay(surf, (px0, py0, pw, ph), 20)
+
+        if loading:
+            dots = "." * (int(wait * 2) % 4)
+            ls = font_med.render(f"通信中{dots}", True, (120, 115, 150))
+            surf.blit(ls, (W//2 - ls.get_width()//2, py0 + ph//2 - ls.get_height()//2))
+        else:
+            if not scores:
+                ns = font_med.render("ランキング取得失敗", True, NEON_R)
+                surf.blit(ns, (W//2 - ns.get_width()//2, py0 + ph//2 - 20))
+            else:
+                row_h = 36
+                y0    = py0 + 24
+                for rank, (name, sc) in enumerate(scores, 1):
+                    is_me = (name == my_name and sc == my_score)
+                    col   = NEON_Y if is_me else (GOLD if rank == 1 else (200, 195, 220))
+                    prefix = "▶ " if is_me else f"{rank:2d}. "
+                    line   = font_med.render(f"{prefix}{name:<6}  {sc:>8}", True, col)
+                    surf.blit(line, (px0 + 40, y0 + (rank - 1) * row_h))
+
+            hint = font_small.render("[ENTER / ESC] 続ける", True, (80, 75, 110))
+            surf.blit(hint, (W//2 - hint.get_width()//2, py0 + ph + 12))
+
+        flip_display()
 
 def _scan_overlay(surf, rect, alpha=18):
     x, y, w, h = rect
@@ -5337,6 +5587,7 @@ def run_game(snd,sprites,char_data):
         for event in pygame.event.get():
             if event.type==pygame.QUIT: snd.stop_bgm(); pygame.quit(); sys.exit()
             if event.type==pygame.KEYDOWN:
+                if event.key==pygame.K_F11: toggle_fullscreen()
                 if event.key==pygame.K_m: snd.toggle_mute()
                 if state=="gameover":
                     if event.key==pygame.K_RETURN: snd.stop_bgm(); return "char_select"
@@ -5369,7 +5620,7 @@ def run_game(snd,sprites,char_data):
                     if event.key in (pygame.K_ESCAPE,pygame.K_t):
                         state="pause"
             if event.type==pygame.MOUSEBUTTONDOWN:
-                mx,my=pygame.mouse.get_pos()
+                mx,my=screen_to_canvas(*pygame.mouse.get_pos())
                 if state=="levelup":
                     for i,rect in enumerate(levelup_rects):
                         if rect.collidepoint(mx,my):
@@ -5408,7 +5659,7 @@ def run_game(snd,sprites,char_data):
             if event.type==pygame.MOUSEBUTTONUP:
                 _vol_drag=None
             if event.type==pygame.MOUSEMOTION and _vol_drag and state=="pause":
-                mx2,_=pygame.mouse.get_pos()
+                mx2,_=screen_to_canvas(*pygame.mouse.get_pos())
                 bar_key=f"{_vol_drag}_bar"
                 if pause_rects.get(bar_key):
                     bar=pause_rects[bar_key]
@@ -5430,7 +5681,7 @@ def run_game(snd,sprites,char_data):
                     capsules.append(Capsule(player.x + math.cos(a) * rd, player.y + math.sin(a) * rd))
             if elapsed>=VICTORY_TIME:
                 score = kills*100 + boss_kills*500 + level*200
-                state="gameover"; victory=True
+                state="nameinput"; victory=True
 
             if boss_timer<=0:
                 enemies.append(spawn_boss(player.x,player.y,boss_level))
@@ -5658,7 +5909,7 @@ def run_game(snd,sprites,char_data):
             minions = [m for m in minions if m.alive]
             if not player.alive:
                 score = kills*100 + boss_kills*500 + level*200
-                state="gameover"; victory=False
+                state="nameinput"; victory=False
 
         sx_off,sy_off=shake.update(dt)
         ox=player.x+sx_off; oy=player.y+sy_off
@@ -5762,6 +6013,12 @@ def run_game(snd,sprites,char_data):
                         ds=font_tiny.render(f"{wd}m",True,(60,240,80))
                         screen.blit(ds,(ax-ds.get_width()//2,ay-ds.get_height()-6))
         if state=="levelup":  levelup_rects=levelup_screen(screen,levelup_opts)
+        if state=="nameinput":
+            snd.stop_bgm()
+            entered_name = name_entry_screen(screen, score)
+            submit_score(entered_name, score)
+            leaderboard_screen(screen, score, entered_name)
+            state = "gameover"
         if state=="gameover": game_over_screen(screen,elapsed,kills,victory,score)
         if state=="pause":    pause_rects=pause_screen(screen)
         if state=="tree":     draw_evolution_tree(screen,player)
@@ -5786,7 +6043,7 @@ def run_game(snd,sprites,char_data):
                 pygame.draw.rect(vign,(200,0,0,a2),(i,i,W-i*2,H-i*2),2)
             screen.blit(vign,(0,0))
 
-        pygame.display.flip()
+        flip_display()
 
 
 # ─────────────────────────────────────────────
@@ -5843,6 +6100,7 @@ def opening_screen(surf):
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit()
             if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F11: toggle_fullscreen()
                 if event.key == pygame.K_ESCAPE:
                     pygame.quit(); sys.exit()
                 if phase == "main":
@@ -5914,7 +6172,7 @@ def opening_screen(surf):
             fade_surf.set_alpha(int(fade_alpha))
             surf.blit(fade_surf, (0, 0))
 
-        pygame.display.flip()
+        flip_display()
 
 
 # ─────────────────────────────────────────────
@@ -5980,6 +6238,7 @@ def tutorial_screen(surf):
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit()
             if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F11: toggle_fullscreen()
                 if event.key in (pygame.K_RIGHT, pygame.K_d):
                     if page < total - 1:
                         page += 1; fade_in = True; fade_alpha = 180
@@ -5991,7 +6250,7 @@ def tutorial_screen(surf):
                 elif event.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE):
                     done = True
             if event.type == pygame.MOUSEBUTTONDOWN:
-                mx2, my2 = pygame.mouse.get_pos()
+                mx2, my2 = screen_to_canvas(*pygame.mouse.get_pos())
                 if mx2 > W // 2:
                     if page < total - 1:
                         page += 1; fade_in = True; fade_alpha = 180
@@ -6078,7 +6337,7 @@ def tutorial_screen(surf):
             fade_surf.set_alpha(int(fade_alpha))
             surf.blit(fade_surf, (0, 0))
 
-        pygame.display.flip()
+        flip_display()
 
 
 # ─────────────────────────────────────────────
@@ -6087,11 +6346,11 @@ def tutorial_screen(surf):
 if __name__=="__main__":
     screen.fill(DARK)
     screen.blit(font_med.render("アセット生成中...",True,GRAY),(W//2-90,H//2-20))
-    pygame.display.flip()
+    flip_display()
     snd=SoundManager(); sprites=build_sprites()
     screen.fill(DARK)
     screen.blit(font_med.render("エフェクト読み込み中...",True,GRAY),(W//2-100,H//2-20))
-    pygame.display.flip()
+    flip_display()
     _load_flame_video()
     _load_bullet_video()
     _load_gun_bullet_image()
